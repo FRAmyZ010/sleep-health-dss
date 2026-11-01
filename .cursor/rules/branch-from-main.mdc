@@ -1,0 +1,10 @@
+---
+description: Branch from main before changing project code
+alwaysApply: true
+---
+
+# Branch from main
+
+Before editing code in this project, create a new branch from `main`. Do not commit code changes directly on `main`.
+
+Use a short branch name such as `feat/...` or `fix/...`. The first published history may already sit on `main`; every later change starts from a fresh branch.
