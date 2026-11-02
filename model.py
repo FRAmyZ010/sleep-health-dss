@@ -73,6 +73,7 @@ OCCUPATIONS = [
     "Software Engineer",
     "Teacher",
 ]
+OTHER_OCCUPATION = "Other"
 BMI_CATEGORIES = ["Underweight", "Normal", "Overweight", "Obese"]
 
 # Widget bounds for the assessment form. Wider than the training sample so a
@@ -348,7 +349,7 @@ def coerce_record(payload: dict) -> dict:
         record["Gender"] = gender
 
     occupation = str(payload.get("Occupation", "")).strip()
-    if occupation not in OCCUPATIONS:
+    if occupation not in OCCUPATIONS and occupation != OTHER_OCCUPATION:
         errors.append("Occupation is not one of the supported roles.")
     else:
         record["Occupation"] = occupation
@@ -423,6 +424,11 @@ def explain_record(bundle: dict, record: dict, label: str) -> list[dict]:
                 "feature": feature,
                 "kind": "numeric",
                 "importance": importance.get(feature, 0.0),
+                "user_value": user_value,
+                "none_value": none_value,
+                "predicted_value": predicted_value,
+                "relation": _value_relation(label, user_value, none_value),
+                "class_label": label,
                 "sentence": _numeric_sentence(
                     feature, user_value, none_value, predicted_value, label
                 ),
@@ -561,6 +567,10 @@ def _categorical_factors(meta: dict, record: dict, label: str) -> list[dict]:
         factors.append({
             "feature": feature,
             "kind": "categorical",
+            "category": category,
+            "rate": rate,
+            "base_rate": base_rate,
+            "class_label": label,
             "importance": next(
                 (item["importance"] for item in meta["importances"] if item["feature"] == feature),
                 0.0,
@@ -572,6 +582,18 @@ def _categorical_factors(meta: dict, record: dict, label: str) -> list[dict]:
         })
     factors.sort(key=lambda item: item["importance"], reverse=True)
     return factors[:1]
+
+
+def _value_relation(label: str, user_value: float, none_value: float) -> str:
+    """Name how the entered value sits against the no-disorder median."""
+
+    if label == "None":
+        return "same_group"
+    if user_value > none_value:
+        return "higher"
+    if user_value < none_value:
+        return "lower"
+    return "equal"
 
 
 def _numeric_sentence(
@@ -625,17 +647,28 @@ def _support_notes(bundle: dict, record: dict) -> list[str]:
     for feature, bounds in bundle["meta"]["training_ranges"].items():
         value = float(record[feature])
         if value < bounds["min"] or value > bounds["max"]:
-            notes.append(
-                f"{DISPLAY_NAMES[feature]} is outside the range observed in the "
-                f"training data ({_pretty_number(feature, bounds['min'])} to "
-                f"{_pretty_number(feature, bounds['max'])})."
-            )
+            notes.append({
+                "kind": "range",
+                "feature": feature,
+                "low": float(bounds["min"]),
+                "high": float(bounds["max"]),
+                "sentence": (
+                    f"{DISPLAY_NAMES[feature]} is outside the range observed in the "
+                    f"training data ({_pretty_number(feature, bounds['min'])} to "
+                    f"{_pretty_number(feature, bounds['max'])})."
+                ),
+            })
     for feature in CATEGORICAL:
         value = str(record[feature])
         if value not in bundle["meta"]["known_categories"].get(feature, []):
-            notes.append(
-                f"{DISPLAY_NAMES[feature]} value '{value}' does not appear in the training data."
-            )
+            notes.append({
+                "kind": "unknown",
+                "feature": feature,
+                "value": value,
+                "sentence": (
+                    f"{DISPLAY_NAMES[feature]} value '{value}' does not appear in the training data."
+                ),
+            })
     return notes
 
 
