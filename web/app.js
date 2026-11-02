@@ -1,6 +1,7 @@
 const I18N = window.SLEEP_I18N;
 const CLASS_ORDER = ["None", "Insomnia", "Sleep Apnea"];
-const COLORS = { None: "#2563EB", Insomnia: "#D97706", "Sleep Apnea": "#DC2626" };
+const COLORS = { None: "#047857", Insomnia: "#C2410C", "Sleep Apnea": "#B91C1C" };
+const TONES = { None: "low", Insomnia: "medium", "Sleep Apnea": "high" };
 const PROFILE_FIELDS = [
   "Gender", "Age", "Occupation", "BMI Category", "Sleep Duration", "Quality of Sleep",
   "Physical Activity Level", "Stress Level", "Daily Steps", "Systolic_BP", "Diastolic_BP", "Heart Rate"
@@ -9,7 +10,7 @@ const SESSION_KEY = "sleep-health-web";
 
 const state = {
   lang: "en",
-  page: "assess",
+  page: "home",
   meta: null,
   form: {
     gender: "Female",
@@ -78,9 +79,11 @@ const ICONS = {
   table: [["rect", { x: "4", y: "5", width: "16", height: "14", rx: "2" }], ["path", { d: "M4 10h16M10 10v9" }]],
   arrow: [["path", { d: "M5 12h14M13 6l6 6-6 6" }]],
   back: [["path", { d: "M19 12H5M11 6 5 12l6 6" }]],
-  rows: [["path", { d: "M4 7h16M4 12h16M4 17h10" }]]
+  rows: [["path", { d: "M4 7h16M4 12h16M4 17h10" }]],
+  home: [["path", { d: "M4 11.5 12 4.5l8 7V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z" }]]
 };
-const NAV_ICONS = { assess: "clipboard", result: "list", eda: "bars" };
+const PAGES = ["home", "assess", "result", "eda"];
+const NAV_ICONS = { home: "home", assess: "clipboard", result: "list", eda: "bars" };
 const CLASS_ICONS = { None: "check", Insomnia: "moon", "Sleep Apnea": "lungs" };
 const RISK_ICONS = { Low: "shield", Medium: "moon", High: "alert" };
 const FEATURE_ICONS = {
@@ -187,7 +190,7 @@ function restoreSession() {
     const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null");
     if (!saved || !I18N.TEXT[saved.lang]) return;
     state.lang = saved.lang;
-    state.page = saved.page || "assess";
+    state.page = PAGES.includes(saved.page) ? saved.page : "home";
     state.form = Object.assign(state.form, saved.form || {});
     state.result = saved.result || null;
     state.notice = saved.notice || null;
@@ -309,7 +312,7 @@ function render() {
 }
 
 function renderSidebar() {
-  const nav = el("nav", { class: "nav" }, ["assess", "result", "eda"].map((page) => el("button", {
+  const nav = el("nav", { class: "nav" }, PAGES.map((page) => el("button", {
     type: "button",
     class: state.page === page ? "active" : "",
     onclick: () => showPage(page)
@@ -399,10 +402,52 @@ function renderMain() {
       el("span", { text: label })
     ]);
   }));
-  const page = state.page === "result" ? renderResult() : state.page === "eda" ? renderEda() : renderAssess();
+  const page = state.page === "home" ? renderHome() : state.page === "result" ? renderResult() : state.page === "eda" ? renderEda() : renderAssess();
   return el("main", { class: "main" }, [
     el("div", { class: "topbar" }, [el("span", { text: tr("language") }), language]),
     page
+  ]);
+}
+
+function renderHome() {
+  const card = (iconName, titleKey, bodyKey, tone) => el("article", {
+    class: tone ? `card landing-card tone-${tone}` : "card landing-card"
+  }, [
+    title("h2", iconName, tr(titleKey)),
+    el("p", { text: tr(bodyKey) })
+  ]);
+  return el("section", { class: "landing" }, [
+    title("h1", "moon", tr("page_home")),
+    el("p", { class: "lede", text: tr("home_lead") }),
+    el("div", { class: "grid-3" }, [
+      card("check", "home_low_title", "home_low", "low"),
+      card("moon", "home_mid_title", "home_mid", "medium"),
+      card("lungs", "home_high_title", "home_high", "high")
+    ]),
+    title("h2", "clipboard", tr("home_does_title")),
+    el("p", { class: "lede", text: tr("home_does") }),
+    el("div", { class: "grid-2" }, [
+      card("user", "home_step_you_title", "home_step_you"),
+      card("moon", "home_step_sleep_title", "home_step_sleep"),
+      card("heart", "home_step_heart_title", "home_step_heart"),
+      card("check", "home_step_review_title", "home_step_review")
+    ]),
+    title("h2", "table", tr("home_data_title")),
+    el("p", { class: "lede", text: tr("home_data") }),
+    title("h2", "shield", tr("home_scope_title")),
+    el("p", { class: "lede", text: tr("home_scope") }),
+    el("div", { class: "grid-2 landing-actions" }, [
+      el("button", {
+        type: "button",
+        class: "primary",
+        onclick: () => showPage("assess")
+      }, [icon("clipboard"), el("span", { text: tr("home_start") })]),
+      el("button", {
+        type: "button",
+        class: "secondary",
+        onclick: () => showPage("eda")
+      }, [icon("bars"), el("span", { text: tr("home_explore") })])
+    ])
   ]);
 }
 
@@ -781,7 +826,11 @@ function noticeNode() {
   const lines = notice.code === "failed" && notice.client
     ? stepErrors(state.step).concat(state.result ? [tr("kept_result")] : [])
     : (notice.lines || []);
-  const box = el("div", { class: notice.kind === "ok" ? "banner-ok" : "banner-warn", role: "status" });
+  const tone = notice.code === "saved" && notice.risk ? `banner-tone banner-${notice.risk.toLowerCase()}` : "";
+  const box = el("div", {
+    class: tone || (notice.kind === "ok" ? "banner-ok" : "banner-warn"),
+    role: "status"
+  });
   box.append(el("p", { text: title }));
   lines.forEach((line) => box.append(el("p", { text: line })));
   return box;
@@ -933,7 +982,7 @@ function renderResult() {
       metric("scale", tr("weight"), `${Number(body.weight_kg).toFixed(1)} ${tr("kg")}`),
       metric("ruler", tr("height"), `${Number(body.height_cm).toFixed(1)} ${tr("cm")}`),
       metric("scale", tr("bmi_short"), body.bmi_display),
-      metric("user", tr("bmi_category"), named("bmi", body.category))
+      metric("user", tr("bmi_category"), named("bmi", body.category), body.category.toLowerCase())
     ]),
     el("p", { class: "note", text: tr("bmi_formula") }),
     el("div", { class: `risk risk-${result.risk_level.toLowerCase()}` }, [
@@ -949,7 +998,8 @@ function renderResult() {
       result.probabilities[label],
       `${(result.probabilities[label] * 100).toFixed(1)}%`,
       COLORS[label],
-      CLASS_ICONS[label]
+      CLASS_ICONS[label],
+      true
     ))),
     title("h2", "pulse", tr("importance")),
     el("p", { class: "note", text: tr("importance_caption") }),
@@ -966,7 +1016,7 @@ function renderResult() {
       ? el("ul", { class: "card actions" }, result.factors.map((factor) => el("li", { text: factorText(factor) })))
       : el("p", { class: "banner-info", text: tr("no_factors") }),
     title("h2", "decision", tr("decision")),
-    el("div", { class: "card" }, [
+    el("div", { class: `card tone-${TONES[result.label] || "low"}` }, [
       el("p", {}, [el("strong", { text: tr("risk_word", { level: named("risk", result.risk_level) }) })]),
       el("p", { text: advice.decision }),
       el("ol", { class: "actions" }, advice.actions.map((action) => el("li", { text: action })))
@@ -982,20 +1032,22 @@ function renderResult() {
   ]);
 }
 
-function metric(iconName, label, value) {
-  return el("div", { class: "metric" }, [
+function metric(iconName, label, value, tone) {
+  return el("div", { class: tone ? `metric metric-${tone}` : "metric" }, [
     el("p", { class: "metric-label" }, [icon(iconName), el("span", { text: label })]),
     el("p", { class: "metric-value", text: value })
   ]);
 }
 
-function barRow(label, fraction, value, color, iconName) {
+function barRow(label, fraction, value, color, iconName, paintLabel) {
   const width = Math.max(0, Math.min(1, fraction)) * 100;
   const fill = el("div", { class: "bar-fill" });
   fill.style.width = `${width}%`;
   fill.style.background = color;
+  const labelNode = el("span", { class: "bar-label" }, iconName ? [icon(iconName), el("span", { text: label })] : [label]);
+  if (paintLabel) labelNode.style.color = color;
   return el("div", { class: "bar-row" }, [
-    el("span", { class: "bar-label" }, iconName ? [icon(iconName), el("span", { text: label })] : [label]),
+    labelNode,
     el("div", { class: "bar-track" }, [fill]),
     el("span", { class: "bar-value", text: value })
   ]);
@@ -1070,7 +1122,7 @@ function heatmapBlock(heatmap) {
   table.append(body);
   return el("div", {}, [
     el("div", { class: "card chart-scroll" }, [table]),
-    el("p", { class: "note", text: `${pearsonNote(heatmap.pearson)} ${tr("disorder_code")}` })
+    el("p", { class: "note", text: `${pearsonNote(heatmap.pearson)} ${tr("heat_meaning")} ${tr("disorder_code")}` })
   ]);
 }
 
@@ -1101,13 +1153,17 @@ function scatterBlock(scatter) {
   if (scatter.overlap) caption += tr("scatter_overlap", { count: scatter.overlap });
   return el("div", {}, [
     el("div", { class: "card chart-scroll" }, [svg]),
-    el("div", { class: "legend" }, CLASS_ORDER.map((label) => {
-      const swatch = el("span", { class: "swatch" });
-      swatch.style.background = COLORS[label];
-      return el("span", {}, [swatch, named("class", label)]);
-    })),
+    classLegend(),
     el("p", { class: "note", text: caption })
   ]);
+}
+
+function classLegend() {
+  return el("div", { class: "legend" }, CLASS_ORDER.map((label) => {
+    const swatch = el("span", { class: "swatch" });
+    swatch.style.background = COLORS[label];
+    return el("span", { class: `legend-${TONES[label]}` }, [swatch, named("class", label)]);
+  }));
 }
 
 function scatterSvg(points) {
@@ -1175,6 +1231,7 @@ function prevalenceBlock(prevalence) {
   }
   return el("div", {}, [
     el("div", { class: "card chart-scroll" }, [prevalenceSvg(prevalence.groups)]),
+    classLegend(),
     el("p", { class: "note", text: caption })
   ]);
 }
@@ -1292,14 +1349,14 @@ function paintFailure() {
 
 window.addEventListener("hashchange", () => {
   const page = location.hash.replace("#", "");
-  if (!["assess", "result", "eda"].includes(page) || page === state.page) return;
+  if (!PAGES.includes(page) || page === state.page) return;
   showPage(page);
 });
 
 async function boot() {
   restoreSession();
   const hashed = location.hash.replace("#", "");
-  if (["assess", "result", "eda"].includes(hashed)) state.page = hashed;
+  state.page = PAGES.includes(hashed) ? hashed : "home";
   document.getElementById("app").replaceChildren(el("p", { class: "loading", text: tr("loading") }));
   try {
     const response = await fetch("/api/meta");
