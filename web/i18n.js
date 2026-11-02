@@ -32,6 +32,8 @@ window.SLEEP_I18N = {
       home_data: "The model learns from 374 rows in the Sleep Health and Lifestyle Dataset. In this forest, BMI category matters most, followed by systolic and diastolic blood pressure.",
       home_scope_title: "What this demo is for",
       home_scope: "It supports a course demonstration. The risk level follows the predicted class. It does not diagnose a patient. A clinician makes that decision.",
+      reduce_title: "What to do to lower this risk",
+      reduce_lead: "This result is {label}, {risk} risk. The steps below are a first guide to lower the chance this pattern continues. They are not a diagnosis.",
       home_start: "Start assessment",
       home_explore: "Explore the training table",
       page_assess: "Individual Sleep Risk Assessment",
@@ -199,6 +201,8 @@ window.SLEEP_I18N = {
       home_data: "โมเดลเรียนรู้จาก 374 แถวในชุดข้อมูล Sleep Health and Lifestyle ในป่าสุ่มนี้ หมวด BMI สำคัญที่สุด ตามด้วยความดันตัวบนและตัวล่าง",
       home_scope_title: "ใช้ทำอะไรได้",
       home_scope: "ใช้สาธิตในวิชานี้ ระดับความเสี่ยงไปกับคลาสที่ทำนาย ยังไม่ใช่การวินิจฉัย แพทย์เป็นผู้ตัดสินใจ",
+      reduce_title: "ควรทำอะไรเพื่อลดโอกาสเสี่ยง",
+      reduce_lead: "ผลนี้อยู่ในกลุ่ม{label} ความเสี่ยง{risk} ขั้นตอนด้านล่างเป็นคำแนะนำเบื้องต้นเพื่อลดโอกาสที่รูปแบบนี้จะดำเนินต่อ ไม่ใช่การวินิจฉัย",
       home_start: "เริ่มประเมิน",
       home_explore: "สำรวจตารางฝึก",
       page_assess: "ประเมินความเสี่ยงรายบุคคล",
@@ -382,49 +386,49 @@ window.SLEEP_I18N = {
   ADVICE: {
     en: {
       None: {
-        decision: "Maintain current routine.",
+        decision: "Keep the low-risk pattern in place.",
         actions: [
-          "Keep a regular sleep and wake schedule.",
+          "Go to bed and wake up at the same time.",
           "Sleep in a dark, quiet room.",
           "Limit caffeine in the hours before bed."
         ]
       },
       Insomnia: {
-        decision: "Behavioral and lifestyle intervention.",
+        decision: "Change the habits that keep this risk up.",
         actions: [
-          "Practice stress management and relaxation techniques.",
-          "Limit screen time for one hour before sleep.",
-          "Consider consulting a wellness coach."
+          "Keep a sleep window of at least 7 hours.",
+          "Limit screen time for one hour before bed.",
+          "Use a short daily relaxation routine, and talk with a wellness coach if poor sleep continues."
         ]
       },
       "Sleep Apnea": {
-        decision: "Medical evaluation required.",
+        decision: "Lowering this risk needs a clinician. Home steps do not replace that visit.",
         actions: [
-          "Treat this result as a red flag, not a diagnosis.",
-          "Schedule a clinical polysomnography (sleep test).",
-          "Consult a pulmonologist or sleep specialist."
+          "Treat this result as a warning, not a diagnosis.",
+          "Schedule a clinical sleep study.",
+          "Show this result to a sleep clinician before trying to manage it alone."
         ]
       }
     },
     th: {
       None: {
-        decision: "คงกิจวัตรเดิม",
+        decision: "รักษาพฤติกรรมที่ทำให้ความเสี่ยงอยู่ในระดับต่ำ",
         actions: ["นอนและตื่นให้เป็นเวลา", "นอนในห้องมืดและเงียบ", "เลี่ยงคาเฟอีนก่อนนอน"]
       },
       Insomnia: {
-        decision: "ปรับพฤติกรรมและการใช้ชีวิต",
+        decision: "ปรับพฤติกรรมที่ค้ำจุนความเสี่ยงนี้",
         actions: [
-          "ฝึกจัดการความเครียดและผ่อนคลาย",
+          "จัดเวลานอนให้ได้อย่างน้อย 7 ชั่วโมง",
           "ลดเวลาหน้าจออย่างน้อย 1 ชั่วโมงก่อนนอน",
-          "พิจารณาปรึกษาผู้ดูแลด้านสุขภาพ"
+          "ฝึกผ่อนคลายสั้นๆ ทุกวัน และคุยกับผู้ดูแลสุขภาพถ้าการนอนยังไม่ดีขึ้น"
         ]
       },
       "Sleep Apnea": {
-        decision: "ควรพบแพทย์",
+        decision: "การลดความเสี่ยงนี้ต้องให้แพทย์ดู ขั้นตอนที่บ้านแทนการพบแพทย์ไม่ได้",
         actions: [
           "ถือว่าเป็นสัญญาณเตือน ไม่ใช่การวินิจฉัย",
           "นัดตรวจการนอนในโรงพยาบาล",
-          "ปรึกษาแพทย์ด้านการนอนหลับ"
+          "นำผลนี้ให้แพทย์ด้านการนอนดูก่อนพยายามจัดการเอง"
         ]
       }
     }

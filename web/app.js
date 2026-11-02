@@ -1015,12 +1015,7 @@ function renderResult() {
     result.factors && result.factors.length
       ? el("ul", { class: "card actions" }, result.factors.map((factor) => el("li", { text: factorText(factor) })))
       : el("p", { class: "banner-info", text: tr("no_factors") }),
-    title("h2", "decision", tr("decision")),
-    el("div", { class: `card tone-${TONES[result.label] || "low"}` }, [
-      el("p", {}, [el("strong", { text: tr("risk_word", { level: named("risk", result.risk_level) }) })]),
-      el("p", { text: advice.decision }),
-      el("ol", { class: "actions" }, advice.actions.map((action) => el("li", { text: action })))
-    ]),
+    reduceRisk(result, advice),
     result.support_notes && result.support_notes.length
       ? el("div", {}, [
         title("h2", "alert", tr("outside")),
@@ -1029,6 +1024,19 @@ function renderResult() {
       : null,
     title("h2", "table", tr("submitted")),
     profileTable(result.profile)
+  ]);
+}
+
+function reduceRisk(result, advice) {
+  const tone = TONES[result.label] || "low";
+  return el("section", { class: `card reduce-risk tone-${tone}` }, [
+    title("h2", RISK_ICONS[result.risk_level] || "shield", tr("reduce_title")),
+    el("p", { class: "lede", text: tr("reduce_lead", {
+      label: named("class", result.label),
+      risk: named("risk", result.risk_level)
+    }) }),
+    el("p", { text: advice.decision }),
+    el("ol", { class: "actions" }, advice.actions.map((action) => el("li", { text: action })))
   ]);
 }
 
