@@ -4,15 +4,54 @@ const COLORS = { None: "#047857", Insomnia: "#C2410C", "Sleep Apnea": "#B91C1C" 
 const TONES = { None: "low", Insomnia: "medium", "Sleep Apnea": "high" };
 const PROFILE_FIELDS = [
   "Gender", "Age", "Occupation", "BMI Category", "Sleep Duration", "Quality of Sleep",
-  "Physical Activity Level", "Stress Level", "Daily Steps", "Systolic_BP", "Diastolic_BP", "Heart Rate"
+  "Physical Activity Level", "Stress Level", "Daily Steps", "Heart Rate"
 ];
-const SESSION_KEY = "sleep-health-web";
+const SESSION_KEY = "sleep-health-web-v4";
 
-const state = {
-  lang: "en",
-  page: "home",
-  meta: null,
-  form: {
+const SCREENING_SECTIONS = [
+  { id: "before", ids: [1] },
+  { id: "during", ids: [2, 3, 4, 5, 6, 7] },
+  { id: "after", ids: [8, 9, 10, 11, 12, 13] }
+];
+// Flag a group only with enough hits, or an apnea red-flag item.
+const SCREENING_GROUPS = [
+  { id: "insomnia", questions: [1, 6, 9], deep: true, severity: 3, minHits: 2, redFlags: [] },
+  {
+    id: "sleep_apnea",
+    questions: [2, 3, 4, 5, 7, 8, 10, 11, 12, 13],
+    deep: true,
+    severity: 5,
+    minHits: 2,
+    redFlags: [3, 4, 12]
+  }
+];
+const SCREENING_IDS = SCREENING_SECTIONS.flatMap((section) => section.ids);
+const SCREEN_CLASS = { insomnia: "Insomnia", sleep_apnea: "Sleep Apnea" };
+// Partner-observed items: people who live alone can answer "unknown".
+const PARTNER_DEPENDENT_IDS = new Set([2, 3, 4, 5]);
+const WATCH_FORM_KEYS = ["sleep", "quality", "activity", "stress", "steps", "heart"];
+const WATCH_DEMO = {
+  sleep: "7.2",
+  quality: "7",
+  activity: "58",
+  stress: "4",
+  steps: "7420",
+  heart: "68"
+};
+
+function blankWatchSource() {
+  return {
+    sleep: false,
+    quality: false,
+    activity: false,
+    stress: false,
+    steps: false,
+    heart: false
+  };
+}
+
+function defaultForm() {
+  return {
     gender: "Female",
     age: "40",
     occupation: "Nurse",
@@ -23,17 +62,72 @@ const state = {
     activity: "60",
     stress: "5",
     steps: "6000",
-    systolic: "120",
-    diastolic: "80",
     heart: "72"
-  },
+  };
+}
+
+function occupationChoices() {
+  const list = (state.meta && Array.isArray(state.meta.occupations))
+    ? state.meta.occupations.slice()
+    : [];
+  if (!list.includes("Student")) {
+    const otherIndex = list.indexOf("Other");
+    if (otherIndex >= 0) list.splice(otherIndex, 0, "Student");
+    else list.push("Student");
+  }
+  return list;
+}
+
+const state = {
+  lang: "en",
+  page: "home",
+  meta: null,
+  form: defaultForm(),
+  watchSource: blankWatchSource(),
   result: null,
   notice: null,
   step: 0,
   busy: false,
   filters: null,
-  eda: null
+  eda: null,
+  screening: {
+    answers: {},
+    triage: null,
+    view: "questions"
+  },
+  feedbackStats: null,
+  feedbackNotice: null,
+  feedbackBusy: false
 };
+
+function classTone(label) {
+  return TONES[label] || "low";
+}
+
+function nextActionKey(decision) {
+  if (decision && decision.conflict) return "action_conflict";
+  const risk = decision && decision.risk_level;
+  if (risk === "High") return "action_high";
+  if (risk === "Medium") return "action_medium";
+  return "action_low";
+}
+
+function resetDemoState() {
+  state.form = defaultForm();
+  state.watchSource = blankWatchSource();
+  state.result = null;
+  state.notice = { kind: "ok", title: tr("refresh_done") };
+  state.step = 0;
+  state.busy = false;
+  state.screening = { answers: {}, triage: null, view: "questions" };
+  state.feedbackNotice = null;
+  state.filters = null;
+  state.eda = null;
+  state.page = "home";
+  sessionStorage.removeItem(SESSION_KEY);
+  saveSession();
+  render();
+}
 
 let edaToken = 0;
 let ageTimer = 0;
@@ -82,8 +176,8 @@ const ICONS = {
   rows: [["path", { d: "M4 7h16M4 12h16M4 17h10" }]],
   home: [["path", { d: "M4 11.5 12 4.5l8 7V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z" }]]
 };
-const PAGES = ["home", "assess", "result", "eda"];
-const NAV_ICONS = { home: "home", assess: "clipboard", result: "list", eda: "bars" };
+const PAGES = ["home", "screen", "assess", "result", "eda"];
+const NAV_ICONS = { home: "home", screen: "list", assess: "clipboard", result: "list", eda: "bars" };
 const CLASS_ICONS = { None: "check", Insomnia: "moon", "Sleep Apnea": "lungs" };
 const RISK_ICONS = { Low: "shield", Medium: "moon", High: "alert" };
 const FEATURE_ICONS = {
@@ -94,8 +188,6 @@ const FEATURE_ICONS = {
   "Stress Level": "bolt",
   "Heart Rate": "heart",
   "Daily Steps": "steps",
-  Systolic_BP: "up",
-  Diastolic_BP: "down",
   Gender: "user",
   Occupation: "briefcase",
   "BMI Category": "scale",
@@ -179,9 +271,11 @@ function saveSession() {
     lang: state.lang,
     page: state.page,
     form: state.form,
+    watchSource: state.watchSource,
     result: state.result,
     notice: state.notice,
-    step: state.step
+    step: state.step,
+    screening: state.screening
   }));
 }
 
@@ -192,9 +286,19 @@ function restoreSession() {
     state.lang = saved.lang;
     state.page = PAGES.includes(saved.page) ? saved.page : "home";
     state.form = Object.assign(state.form, saved.form || {});
+    delete state.form.systolic;
+    delete state.form.diastolic;
+    state.watchSource = Object.assign(blankWatchSource(), saved.watchSource || {});
     state.result = saved.result || null;
     state.notice = saved.notice || null;
     state.step = Number.isInteger(saved.step) ? saved.step : 0;
+    if (saved.screening && typeof saved.screening === "object") {
+      state.screening = {
+        answers: saved.screening.answers || {},
+        triage: saved.screening.triage || null,
+        view: saved.screening.view === "triage" ? "triage" : "questions"
+      };
+    }
   } catch (_error) {
     sessionStorage.removeItem(SESSION_KEY);
   }
@@ -231,8 +335,6 @@ function pretty(feature, value) {
   const units = {
     "Physical Activity Level": ["นาที/วัน", "min/day"],
     "Heart Rate": ["ครั้ง/นาที", "bpm"],
-    Systolic_BP: ["มม.ปรอท", "mmHg"],
-    Diastolic_BP: ["มม.ปรอท", "mmHg"],
     Age: ["ปี", "years"]
   };
   const shown = Math.abs(number - Math.round(number)) < 1e-6 ? number.toFixed(0) : number.toFixed(1);
@@ -291,18 +393,28 @@ function profileValue(feature, value) {
 }
 
 function errorText(item) {
-  if (item.code === "bp_order" || item.code === "weight_range" || item.code === "height_range" || item.code === "server") {
+  if (item.code === "weight_range" || item.code === "height_range" || item.code === "server") {
     return tr(item.code === "server" ? "server_error" : item.code);
   }
   return item.message || tr("score_failed");
 }
 
+function canAccessDeepAssess() {
+  return Boolean(state.screening.triage && state.screening.triage.deepEligible);
+}
+
 function showPage(page) {
+  if (page === "assess" && !canAccessDeepAssess()) {
+    state.notice = { kind: "warn", text: tr("assess_locked") };
+    page = "screen";
+    state.screening.view = state.screening.triage ? "triage" : "questions";
+  }
   state.page = page;
   if (location.hash !== `#${page}`) location.hash = page;
   saveSession();
   render();
   if (page === "eda") fetchEda();
+  if (page === "result") fetchFeedbackStats();
 }
 
 function render() {
@@ -402,11 +514,273 @@ function renderMain() {
       el("span", { text: label })
     ]);
   }));
-  const page = state.page === "home" ? renderHome() : state.page === "result" ? renderResult() : state.page === "eda" ? renderEda() : renderAssess();
+  const refresh = el("button", {
+    type: "button",
+    class: "secondary refresh-btn",
+    title: tr("refresh_hint"),
+    onclick: resetDemoState
+  }, [icon("back"), el("span", { text: tr("refresh") })]);
+  const page = state.page === "home"
+    ? renderHome()
+    : state.page === "screen"
+      ? renderScreen()
+      : state.page === "result"
+        ? renderResult()
+        : state.page === "eda"
+          ? renderEda()
+          : renderAssess();
   return el("main", { class: "main" }, [
-    el("div", { class: "topbar" }, [el("span", { text: tr("language") }), language]),
+    el("div", { class: "topbar" }, [
+      el("div", { class: "topbar-tools" }, [
+        el("span", { text: tr("language") }),
+        language,
+        refresh
+      ])
+    ]),
     page
   ]);
+}
+
+function isScreeningAnswered(value) {
+  return value === true || value === false || value === "unknown";
+}
+
+function screeningAnsweredCount() {
+  return SCREENING_IDS.filter((id) => isScreeningAnswered(state.screening.answers[id])).length;
+}
+
+function evaluateScreening(answers) {
+  const flagged = SCREENING_GROUPS.map((group) => {
+    const hits = group.questions.filter((id) => answers[id] === true);
+    const redHits = (group.redFlags || []).filter((id) => answers[id] === true);
+    const byThreshold = hits.length >= (group.minHits || 1);
+    const byRedFlag = redHits.length > 0;
+    return {
+      id: group.id,
+      deep: group.deep,
+      severity: group.severity,
+      hits: hits.slice(),
+      redHits: redHits.slice(),
+      hitCount: hits.length,
+      total: group.questions.length,
+      minHits: group.minHits || 1,
+      flagged: byThreshold || byRedFlag,
+      trigger: byRedFlag ? "red_flag" : byThreshold ? "threshold" : "none"
+    };
+  }).filter((group) => group.flagged);
+  flagged.sort((a, b) => b.hitCount - a.hitCount || b.severity - a.severity);
+  return {
+    flagged,
+    deepEligible: flagged.length > 0,
+    topClass: flagged.length ? SCREEN_CLASS[flagged[0].id] : "None",
+    yesCount: SCREENING_IDS.filter((id) => answers[id] === true).length,
+    unknownCount: SCREENING_IDS.filter((id) => answers[id] === "unknown").length
+  };
+}
+
+function confidenceBand(probability) {
+  if (probability < 0.40) return "low";
+  if (probability < 0.70) return "mid";
+  return "high";
+}
+
+function screenEvidence(triage) {
+  if (!triage || !triage.flagged || !triage.flagged.length) {
+    return { strength: 0, red_flag: false, hit_count: 0, total: 0, trigger: "none" };
+  }
+  const top = triage.flagged[0];
+  const ratio = top.total ? top.hitCount / top.total : 0;
+  const strength = top.trigger === "red_flag" ? Math.max(0.85, ratio) : ratio;
+  return {
+    strength,
+    red_flag: top.trigger === "red_flag",
+    hit_count: top.hitCount,
+    total: top.total,
+    trigger: top.trigger,
+    group_id: top.id
+  };
+}
+
+function buildDecision(result, triage) {
+  const label = result.label;
+  const topProb = Number(result.probabilities[label] || 0);
+  const band = confidenceBand(topProb);
+  const evidence = screenEvidence(triage);
+  const screenClass = triage && triage.deepEligible ? triage.topClass : "None";
+  let conflict = null;
+  let riskLevel = result.risk_level;
+  let adviceKey = label;
+  const notes = [];
+
+  if (triage && triage.deepEligible && screenClass !== "None") {
+    if (label === "None") {
+      conflict = "screen_positive_model_none";
+      riskLevel = "High";
+      adviceKey = "conflict_review";
+    } else if (label !== screenClass) {
+      conflict = "screen_model_mismatch";
+      riskLevel = "High";
+      adviceKey = "conflict_mismatch";
+    }
+  }
+
+  if (!conflict) {
+    if (band === "low") {
+      riskLevel = label === "Sleep Apnea" ? "High" : "Medium";
+      adviceKey = `uncertain_${label === "Sleep Apnea" ? "apnea" : label === "Insomnia" ? "insomnia" : "none"}`;
+    } else if (band === "mid" && label === "None") {
+      riskLevel = "Low";
+      adviceKey = "None";
+    } else if (band === "mid") {
+      riskLevel = label === "Sleep Apnea" ? "High" : "Medium";
+      adviceKey = label;
+    } else {
+      riskLevel = TONES[label] === "high" ? "High" : TONES[label] === "medium" ? "Medium" : "Low";
+      adviceKey = label;
+    }
+
+    // Pre-screen evidence adjusts risk when stages agree (not inside the RF).
+    if (screenClass === label && screenClass !== "None") {
+      if (evidence.red_flag || evidence.strength >= 0.5) {
+        if (riskLevel === "Medium") riskLevel = "High";
+        notes.push("screen_boost");
+      }
+      if (evidence.red_flag && label === "Sleep Apnea") {
+        adviceKey = "Sleep Apnea";
+        riskLevel = "High";
+        notes.push("red_flag_apnea");
+      }
+    }
+  }
+
+  const agree = screenClass === label;
+  const hybridScore = conflict
+    ? 1
+    : Math.min(1, 0.6 * topProb + 0.4 * (agree ? evidence.strength : evidence.strength * 0.25));
+
+  const pack = I18N.ADVICE[state.lang][adviceKey] || I18N.ADVICE[state.lang][label];
+  return {
+    label,
+    screen_class: screenClass,
+    top_probability: topProb,
+    confidence_band: band,
+    screen_strength: evidence.strength,
+    screen_red_flag: evidence.red_flag,
+    hybrid_score: hybridScore,
+    conflict,
+    risk_level: riskLevel,
+    decision: pack.decision,
+    actions: pack.actions.slice(),
+    advice_key: adviceKey,
+    notes
+  };
+}
+
+const FEEDBACK_KEY = "sleep-health-feedback-v1";
+
+function loadFeedbackLog() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(FEEDBACK_KEY) || "[]");
+    return Array.isArray(rows) ? rows : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function feedbackStats() {
+  const rows = loadFeedbackLog();
+  const useful = rows.filter((row) => row.useful === true).length;
+  return {
+    total: rows.length,
+    useful,
+    rate: rows.length ? useful / rows.length : null
+  };
+}
+
+async function submitFeedback(useful, note) {
+  const result = state.result;
+  if (!result || state.feedbackBusy) return;
+  const decision = result.decision || buildDecision(result, state.screening.triage);
+  const entry = {
+    at: new Date().toISOString(),
+    useful: Boolean(useful),
+    note: String(note || "").trim().slice(0, 500),
+    model_label: result.label,
+    screen_class: decision.screen_class,
+    risk_level: decision.risk_level,
+    top_probability: decision.top_probability,
+    hybrid_score: decision.hybrid_score,
+    conflict: decision.conflict
+  };
+  const rows = loadFeedbackLog();
+  rows.push(entry);
+  localStorage.setItem(FEEDBACK_KEY, JSON.stringify(rows.slice(-200)));
+  state.feedbackBusy = true;
+  state.feedbackNotice = null;
+  render();
+  try {
+    const response = await fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(entry)
+    });
+    const body = await response.json();
+    if (response.ok && body.stats) {
+      state.feedbackStats = body.stats;
+      state.feedbackNotice = { kind: "ok", useful: entry.useful, source: "server" };
+    } else {
+      state.feedbackNotice = { kind: "ok", useful: entry.useful, source: "local" };
+    }
+  } catch (_error) {
+    state.feedbackNotice = { kind: "ok", useful: entry.useful, source: "local" };
+  }
+  state.feedbackBusy = false;
+  saveSession();
+  render();
+}
+
+async function fetchFeedbackStats() {
+  try {
+    const response = await fetch("/api/feedback");
+    if (!response.ok) return;
+    state.feedbackStats = await response.json();
+  } catch (_error) {
+    state.feedbackStats = null;
+  }
+  if (state.page === "result") {
+    const main = document.querySelector(".main");
+    if (main) main.replaceWith(renderMain());
+  }
+}
+
+function setScreeningAnswer(id, value) {
+  state.screening.answers[id] = value;
+  state.screening.triage = null;
+  state.screening.view = "questions";
+  if (state.notice && state.notice.kind === "warn") state.notice = null;
+  saveSession();
+  render();
+}
+
+function submitScreening() {
+  if (screeningAnsweredCount() < SCREENING_IDS.length) {
+    state.notice = { kind: "warn", text: tr("screen_incomplete") };
+    saveSession();
+    render();
+    return;
+  }
+  state.notice = null;
+  state.screening.triage = evaluateScreening(state.screening.answers);
+  state.screening.view = "triage";
+  saveSession();
+  render();
+}
+
+function resetScreening() {
+  state.screening = { answers: {}, triage: null, view: "questions" };
+  state.notice = null;
+  saveSession();
+  render();
 }
 
 function renderHome() {
@@ -427,10 +801,10 @@ function renderHome() {
     title("h2", "clipboard", tr("home_does_title")),
     el("p", { class: "lede", text: tr("home_does") }),
     el("div", { class: "grid-2" }, [
+      card("list", "home_step_screen_title", "home_step_screen"),
       card("user", "home_step_you_title", "home_step_you"),
       card("moon", "home_step_sleep_title", "home_step_sleep"),
-      card("heart", "home_step_heart_title", "home_step_heart"),
-      card("check", "home_step_review_title", "home_step_review")
+      card("heart", "home_step_heart_title", "home_step_heart")
     ]),
     title("h2", "table", tr("home_data_title")),
     el("p", { class: "lede", text: tr("home_data") }),
@@ -440,8 +814,11 @@ function renderHome() {
       el("button", {
         type: "button",
         class: "primary",
-        onclick: () => showPage("assess")
-      }, [icon("clipboard"), el("span", { text: tr("home_start") })]),
+        onclick: () => {
+          state.screening.view = "questions";
+          showPage("screen");
+        }
+      }, [icon("list"), el("span", { text: tr("home_start") })]),
       el("button", {
         type: "button",
         class: "secondary",
@@ -451,12 +828,167 @@ function renderHome() {
   ]);
 }
 
-function field(iconName, label, control, help) {
+function renderScreen() {
+  if (state.screening.view === "triage" && state.screening.triage) {
+    return renderScreenTriage(state.screening.triage);
+  }
+  const answered = screeningAnsweredCount();
+  const sections = SCREENING_SECTIONS.map((section) => el("article", { class: "card screen-section" }, [
+    title("h2", section.id === "before" ? "moon" : section.id === "during" ? "pulse" : "star", tr(`screen_section_${section.id}`)),
+    el("div", { class: "screen-list" }, section.ids.map((id) => renderScreenQuestion(id)))
+  ]));
+  return el("section", { class: "screen-page" }, [
+    title("h1", "list", tr("page_screen")),
+    el("p", { class: "lede", text: tr("screen_lead") }),
+    el("p", { class: "note", text: tr("screen_progress", { answered, total: SCREENING_IDS.length }) }),
+    state.notice && state.notice.kind === "warn"
+      ? el("p", { class: "banner-warn", text: state.notice.text })
+      : null,
+    ...sections,
+    el("div", { class: "step-actions" }, [
+      el("button", {
+        type: "button",
+        class: "secondary",
+        onclick: resetScreening
+      }, [icon("back"), el("span", { text: tr("screen_reset") })]),
+      el("button", {
+        type: "button",
+        class: "primary",
+        onclick: submitScreening
+      }, [icon("decision"), el("span", { text: tr("screen_submit") })])
+    ])
+  ]);
+}
+
+function renderScreenQuestion(id) {
+  const answer = state.screening.answers[id];
+  const partner = PARTNER_DEPENDENT_IDS.has(id);
+  const choice = (value, labelKey) => el("button", {
+    type: "button",
+    class: `screen-choice${answer === value ? " active" : ""}`,
+    "aria-pressed": answer === value ? "true" : "false",
+    onclick: () => setScreeningAnswer(id, value)
+  }, [el("span", { text: tr(labelKey) })]);
+  const choices = [
+    choice(true, "screen_yes"),
+    choice(false, "screen_no")
+  ];
+  if (partner) choices.push(choice("unknown", "screen_unknown"));
+  return el("div", { class: "screen-item" }, [
+    el("p", { class: "screen-q", text: `${id}. ${tr(`screen_q${id}`)}` }),
+    partner ? el("p", { class: "field-help", text: tr("screen_partner_hint") }) : null,
+    el("div", { class: `screen-choices${partner ? " three" : ""}` }, choices)
+  ]);
+}
+
+function renderScreenTriage(triage) {
+  const ranked = triage.flagged.length
+    ? el("ol", { class: "screen-rank" }, triage.flagged.map((group, index) => el("li", {
+      class: `screen-rank-item${group.deep ? " deep" : ""}`
+    }, [
+      el("strong", { text: tr(`screen_group_${group.id}`) }),
+      el("span", {
+        text: tr("screen_group_hits", {
+          hits: group.hitCount,
+          total: group.total,
+          min: group.minHits,
+          rank: index + 1
+        })
+      }),
+      el("span", {
+        text: group.trigger === "red_flag"
+          ? tr("screen_trigger_red", { items: group.redHits.join(", ") })
+          : tr("screen_trigger_threshold", { min: group.minHits })
+      }),
+      el("p", { text: tr(`screen_group_why_${group.id}`) })
+    ])))
+    : el("p", { class: "banner-ok", text: tr("screen_none_flagged") });
+
+  const actions = [
+    el("button", {
+      type: "button",
+      class: "secondary",
+      onclick: () => {
+        state.screening.view = "questions";
+        saveSession();
+        render();
+      }
+    }, [icon("back"), el("span", { text: tr("screen_edit") })])
+  ];
+
+  if (triage.deepEligible) {
+    actions.push(el("button", {
+      type: "button",
+      class: "primary",
+      onclick: () => showPage("assess")
+    }, [icon("clipboard"), el("span", { text: tr("screen_go_deep") })]));
+  } else {
+    actions.push(el("button", {
+      type: "button",
+      class: "primary",
+      onclick: () => showPage("home")
+    }, [icon("home"), el("span", { text: tr("screen_done") })]));
+  }
+
+  const tone = triage.deepEligible ? "high" : "low";
+  const leadKey = triage.deepEligible ? "screen_triage_deep" : "screen_triage_low";
+
+  return el("section", { class: "screen-page" }, [
+    title("h1", "decision", tr("page_screen_result")),
+    el("div", { class: `risk risk-${tone === "high" ? "high" : tone === "medium" ? "medium" : "low"}` }, [
+      icon(tone === "high" ? "alert" : tone === "medium" ? "moon" : "check"),
+      el("div", {}, [
+        el("p", { class: "risk-kicker", text: tr("screen_rule_kicker") }),
+        el("p", { class: "risk-title", text: tr(leadKey) })
+      ])
+    ]),
+    el("p", { class: "lede", text: tr("screen_rule_explain", {
+      yes: triage.yesCount,
+      groups: triage.flagged.length,
+      unknown: triage.unknownCount || 0
+    }) }),
+    el("p", { class: "note", text: tr("screen_rule_policy") }),
+    triage.unknownCount
+      ? el("p", { class: "note", text: tr("screen_unknown_note", { unknown: triage.unknownCount }) })
+      : null,
+    title("h2", "bars", tr("screen_rank_title")),
+    ranked,
+    el("p", { class: "note", text: tr("screen_disclaimer") }),
+    el("div", { class: "step-actions" }, actions)
+  ]);
+}
+
+function field(iconName, label, control, help, badge) {
   return el("label", { class: "field" }, [
-    el("span", { class: "field-label" }, [icon(iconName), el("span", { text: label })]),
+    el("span", { class: "field-label" }, [
+      icon(iconName),
+      el("span", { text: label }),
+      badge || null
+    ]),
     control,
     help ? el("span", { class: "field-help", text: help }) : null
   ]);
+}
+
+function watchBadge(key) {
+  if (!WATCH_FORM_KEYS.includes(key) || !state.watchSource[key]) return null;
+  return el("span", { class: "source-badge", text: tr("watch_badge") });
+}
+
+function markWatchManual(key) {
+  if (!WATCH_FORM_KEYS.includes(key)) return;
+  if (!state.watchSource[key]) return;
+  state.watchSource[key] = false;
+}
+
+function importWatchDemo() {
+  Object.assign(state.form, WATCH_DEMO);
+  WATCH_FORM_KEYS.forEach((key) => {
+    state.watchSource[key] = true;
+  });
+  state.notice = { kind: "ok", title: tr("watch_imported") };
+  saveSession();
+  render();
 }
 
 function numberField(iconName, label, key, min, max, step, help) {
@@ -465,11 +997,12 @@ function numberField(iconName, label, key, min, max, step, help) {
   });
   input.addEventListener("input", () => {
     state.form[key] = input.value;
+    markWatchManual(key);
     if (key === "weight" || key === "height") updateBmi();
     refreshGuide();
     saveSession();
   });
-  return field(iconName, label, input, help);
+  return field(iconName, label, input, help, watchBadge(key));
 }
 
 function selectField(iconName, label, key, options, group, help) {
@@ -491,11 +1024,12 @@ function sliderField(iconName, label, key, min, max, help) {
   const bubble = el("span", { class: "slider-value", id: `${key}-value`, text: state.form[key] });
   input.addEventListener("input", () => {
     state.form[key] = input.value;
+    markWatchManual(key);
     bubble.textContent = input.value;
     refreshGuide();
     saveSession();
   });
-  return field(iconName, label, el("div", { class: "slider-row" }, [input, bubble]), help);
+  return field(iconName, label, el("div", { class: "slider-row" }, [input, bubble]), help, watchBadge(key));
 }
 
 function updateBmi() {
@@ -514,8 +1048,6 @@ const METER_FEATURE = {
   activity: "Physical Activity Level",
   stress: "Stress Level",
   steps: "Daily Steps",
-  systolic: "Systolic_BP",
-  diastolic: "Diastolic_BP",
   heart: "Heart Rate"
 };
 const BMI_SCALE = { min: 15, max: 40 };
@@ -597,8 +1129,6 @@ function heartVisual() {
   const limits = state.meta.limits;
   return el("div", { class: "viz" }, [
     title("h3", "heart", tr("viz_heart")),
-    meter("systolic", tr("systolic"), limits.Systolic_BP),
-    meter("diastolic", tr("diastolic"), limits.Diastolic_BP),
     meter("heart", tr("heart_rate"), limits["Heart Rate"])
   ]);
 }
@@ -646,8 +1176,9 @@ function refreshGuide() {
   }
 }
 
-function resultStory(result) {
+function resultStory(result, decision) {
   const profile = result.profile;
+  const risk = (decision && decision.risk_level) || result.risk_level;
   return tr("result_story", {
     age: profile.Age,
     gender: named("gender", profile.Gender),
@@ -657,15 +1188,27 @@ function resultStory(result) {
     sleep: Number(profile["Sleep Duration"]).toFixed(1),
     quality: profile["Quality of Sleep"],
     stress: profile["Stress Level"],
-    sys: profile.Systolic_BP,
-    dia: profile.Diastolic_BP,
     hr: profile["Heart Rate"],
+    steps: pretty("Daily Steps", profile["Daily Steps"]),
     label: named("class", result.label),
-    risk: named("risk", result.risk_level)
+    risk: named("risk", risk)
   });
 }
 
 function renderAssess() {
+  if (!canAccessDeepAssess()) {
+    return el("section", {}, [
+      title("h1", "clipboard", tr("page_assess")),
+      el("p", { class: "banner-warn", text: tr("assess_locked") }),
+      el("div", { class: "step-actions" }, [
+        el("button", {
+          type: "button",
+          class: "primary",
+          onclick: () => showPage("screen")
+        }, [icon("list"), el("span", { text: tr("nav_screen") })])
+      ])
+    ]);
+  }
   const limits = state.meta.limits;
   const reading = readBmi();
   const step = Math.min(3, Math.max(0, state.step || 0));
@@ -702,7 +1245,7 @@ function renderAssess() {
       el("div", { class: "card grid-3" }, [
         selectField("user", tr("gender"), "gender", state.meta.genders, "gender"),
         numberField("calendar", tr("age"), "age", limits.Age[0], limits.Age[1], "1"),
-        selectField("briefcase", tr("occupation"), "occupation", state.meta.occupations, "job", tr("occupation_help")),
+        selectField("briefcase", tr("occupation"), "occupation", occupationChoices(), "job", tr("occupation_help")),
         numberField("scale", tr("weight"), "weight", state.meta.weight_limits[0], state.meta.weight_limits[1], "0.1", tr("weight_help")),
         numberField("ruler", tr("height"), "height", state.meta.height_limits[0], state.meta.height_limits[1], "0.1", tr("height_help")),
         el("div", { class: "bmi-card" }, [
@@ -718,21 +1261,35 @@ function renderAssess() {
   } else if (step === 1) {
     body = el("div", {}, [
       title("h2", "moon", tr("sleep_section")),
+      el("p", { class: "note", text: tr("watch_section_hint") }),
+      el("div", { class: "step-actions" }, [
+        el("button", {
+          type: "button",
+          class: "secondary",
+          onclick: importWatchDemo
+        }, [icon("pulse"), el("span", { text: tr("watch_import") })])
+      ]),
       el("div", { class: "card grid-2" }, [
-        numberField("moon", tr("sleep_duration"), "sleep", limits["Sleep Duration"][0], limits["Sleep Duration"][1], "0.1"),
+        numberField("moon", tr("sleep_duration"), "sleep", limits["Sleep Duration"][0], limits["Sleep Duration"][1], "0.1", tr("watch_field_help")),
         sliderField("star", tr("quality"), "quality", limits["Quality of Sleep"][0], limits["Quality of Sleep"][1], tr("quality_help")),
-        numberField("pulse", tr("activity"), "activity", limits["Physical Activity Level"][0], limits["Physical Activity Level"][1], "1"),
+        numberField("pulse", tr("activity"), "activity", limits["Physical Activity Level"][0], limits["Physical Activity Level"][1], "1", tr("watch_field_help")),
         sliderField("bolt", tr("stress"), "stress", limits["Stress Level"][0], limits["Stress Level"][1], tr("stress_help")),
-        numberField("steps", tr("steps"), "steps", limits["Daily Steps"][0], limits["Daily Steps"][1], "100")
+        numberField("steps", tr("steps"), "steps", limits["Daily Steps"][0], limits["Daily Steps"][1], "100", tr("watch_field_help"))
       ])
     ]);
   } else if (step === 2) {
     body = el("div", {}, [
       title("h2", "heart", tr("cardio")),
-      el("div", { class: "card grid-3" }, [
-        numberField("up", tr("systolic"), "systolic", limits.Systolic_BP[0], limits.Systolic_BP[1], "1", tr("bp_help")),
-        numberField("down", tr("diastolic"), "diastolic", limits.Diastolic_BP[0], limits.Diastolic_BP[1], "1"),
-        numberField("heart", tr("heart_rate"), "heart", limits["Heart Rate"][0], limits["Heart Rate"][1], "1")
+      el("p", { class: "note", text: tr("watch_heart_hint") }),
+      el("div", { class: "step-actions" }, [
+        el("button", {
+          type: "button",
+          class: "secondary",
+          onclick: importWatchDemo
+        }, [icon("pulse"), el("span", { text: tr("watch_import") })])
+      ]),
+      el("div", { class: "card grid-2" }, [
+        numberField("heart", tr("heart_rate"), "heart", limits["Heart Rate"][0], limits["Heart Rate"][1], "1", tr("watch_field_help"))
       ])
     ]);
   } else {
@@ -788,45 +1345,48 @@ function renderAssess() {
 }
 
 function reviewCard(reading) {
-  const rows = [
-    [tr("gender"), named("gender", state.form.gender)],
-    [tr("age"), state.form.age],
-    [tr("occupation"), named("job", state.form.occupation)],
-    [tr("weight"), `${Number(state.form.weight).toFixed(1)} ${tr("kg")}`],
-    [tr("height"), `${Number(state.form.height).toFixed(1)} ${tr("cm")}`],
-    [tr("bmi_short"), reading ? `${reading.display} · ${named("bmi", reading.category)}` : "—"],
-    [tr("sleep_duration"), pretty("Sleep Duration", state.form.sleep)],
-    [tr("quality"), pretty("Quality of Sleep", state.form.quality)],
-    [tr("activity"), pretty("Physical Activity Level", state.form.activity)],
-    [tr("stress"), pretty("Stress Level", state.form.stress)],
-    [tr("steps"), pretty("Daily Steps", state.form.steps)],
-    [tr("systolic"), pretty("Systolic_BP", state.form.systolic)],
-    [tr("diastolic"), pretty("Diastolic_BP", state.form.diastolic)],
-    [tr("heart_rate"), pretty("Heart Rate", state.form.heart)]
-  ];
-  return el("div", { class: "card review" }, rows.map(([label, value]) => el("div", { class: "review-row" }, [
-    el("span", { text: label }),
+  const row = (label, value, fromWatch) => el("div", { class: "review-row" }, [
+    el("span", {}, [
+      el("span", { text: label }),
+      fromWatch ? el("span", { class: "source-badge", text: tr("watch_badge") }) : null
+    ]),
     el("strong", { text: value })
-  ])));
+  ]);
+  return el("div", { class: "card review" }, [
+    row(tr("gender"), named("gender", state.form.gender), false),
+    row(tr("age"), state.form.age, false),
+    row(tr("occupation"), named("job", state.form.occupation), false),
+    row(tr("weight"), `${Number(state.form.weight).toFixed(1)} ${tr("kg")}`, false),
+    row(tr("height"), `${Number(state.form.height).toFixed(1)} ${tr("cm")}`, false),
+    row(tr("bmi_short"), reading ? `${reading.display} · ${named("bmi", reading.category)}` : "—", false),
+    row(tr("sleep_duration"), pretty("Sleep Duration", state.form.sleep), state.watchSource.sleep),
+    row(tr("quality"), pretty("Quality of Sleep", state.form.quality), state.watchSource.quality),
+    row(tr("activity"), pretty("Physical Activity Level", state.form.activity), state.watchSource.activity),
+    row(tr("stress"), pretty("Stress Level", state.form.stress), state.watchSource.stress),
+    row(tr("steps"), pretty("Daily Steps", state.form.steps), state.watchSource.steps),
+    row(tr("heart_rate"), pretty("Heart Rate", state.form.heart), state.watchSource.heart)
+  ]);
 }
 
 function noticeNode() {
   if (!state.notice) return null;
   const notice = state.notice;
   let title = notice.title || "";
+  const lines = notice.code === "failed" && notice.client
+    ? stepErrors(state.step).concat(state.result ? [tr("kept_result")] : [])
+    : (notice.lines || []).slice();
   if (notice.code === "saved") {
     title = tr("saved", {
       bmi: notice.bmi,
       category: named("bmi", notice.category),
-      label: named("class", notice.label),
-      risk: named("risk", notice.risk)
+      label: named("class", notice.label)
     });
+    if (notice.actionKey) lines.unshift(tr("saved_action", { action: tr(notice.actionKey) }));
   } else if (notice.code === "failed") title = tr("score_failed");
   else if (notice.code === "offline") title = tr("load_failed");
-  const lines = notice.code === "failed" && notice.client
-    ? stepErrors(state.step).concat(state.result ? [tr("kept_result")] : [])
-    : (notice.lines || []);
-  const tone = notice.code === "saved" && notice.risk ? `banner-tone banner-${notice.risk.toLowerCase()}` : "";
+  const tone = notice.code === "saved"
+    ? `banner-tone banner-${classTone(notice.label)}`
+    : "";
   const box = el("div", {
     class: tone || (notice.kind === "ok" ? "banner-ok" : "banner-warn"),
     role: "status"
@@ -865,15 +1425,7 @@ function stepErrors(step) {
     ].forEach(([feature, key]) => pushRange(errors, feature, key));
   }
   if (checkHeart) {
-    ["Systolic_BP", "systolic", "Diastolic_BP", "diastolic", "Heart Rate", "heart"]
-      .reduce((pairs, item, index, list) => {
-        if (index % 2 === 0) pairs.push([item, list[index + 1]]);
-        return pairs;
-      }, [])
-      .forEach(([feature, key]) => pushRange(errors, feature, key));
-    if (Number.isFinite(Number(state.form.systolic)) && Number.isFinite(Number(state.form.diastolic)) && Number(state.form.systolic) <= Number(state.form.diastolic)) {
-      errors.push(tr("bp_order"));
-    }
+    pushRange(errors, "Heart Rate", "heart");
   }
   return errors;
 }
@@ -920,9 +1472,13 @@ async function submitAssess() {
     "Physical Activity Level": Number(state.form.activity),
     "Stress Level": Number(state.form.stress),
     "Daily Steps": Number(state.form.steps),
-    Systolic_BP: Number(state.form.systolic),
-    Diastolic_BP: Number(state.form.diastolic),
-    "Heart Rate": Number(state.form.heart)
+    "Heart Rate": Number(state.form.heart),
+    data_sources: {
+      watch: WATCH_FORM_KEYS.filter((key) => state.watchSource[key]),
+      manual: WATCH_FORM_KEYS.filter((key) => !state.watchSource[key]).concat([
+        "gender", "age", "occupation", "weight", "height"
+      ])
+    }
   };
   try {
     const response = await fetch("/api/assess", {
@@ -939,14 +1495,35 @@ async function submitAssess() {
         lines: lines.concat(state.result ? [tr("kept_result")] : [])
       };
     } else {
-      state.result = body;
+      const decision = buildDecision(body, state.screening.triage);
+      const yesIds = SCREENING_IDS.filter((id) => state.screening.answers[id] === true);
+      state.result = Object.assign({}, body, {
+        decision,
+        screening: state.screening.triage
+          ? {
+            top_class: state.screening.triage.topClass,
+            flagged: state.screening.triage.flagged.map((group) => ({
+              id: group.id,
+              hitCount: group.hitCount,
+              minHits: group.minHits,
+              trigger: group.trigger,
+              redHits: group.redHits
+            })),
+            yesCount: state.screening.triage.yesCount,
+            yes_ids: yesIds
+          }
+          : null
+      });
+      state.feedbackNotice = null;
       state.notice = {
         kind: "ok",
         code: "saved",
         bmi: body.body.bmi_display,
         category: body.body.category,
         label: body.label,
-        risk: body.risk_level
+        risk: decision.risk_level,
+        conflict: decision.conflict,
+        actionKey: nextActionKey(decision)
       };
     }
   } catch (_error) {
@@ -966,15 +1543,59 @@ function renderResult() {
     ]);
   }
   const result = state.result;
-  const advice = I18N.ADVICE[state.lang][result.label];
+  const decision = result.decision || buildDecision(result, state.screening.triage);
   const body = result.body;
-  const maxImportance = Math.max(...result.importances.map((item) => item.importance), 0.01);
+  const riskLevel = decision.risk_level;
+  const heroTone = classTone(result.label);
+  const actionKey = nextActionKey(decision);
+  const importanceRows = topImportanceRows(result.importances, 5);
+  const conflictBanner = decision.conflict
+    ? el("p", { class: "banner-warn", text: tr(`conflict_${decision.conflict}`) })
+    : null;
+  const screenCard = result.screening
+    ? el("div", { class: "card" }, [
+      title("h2", "list", tr("result_screen_title")),
+      el("p", {
+        text: tr("result_screen_summary", {
+          screen: named("class", result.screening.top_class),
+          model: named("class", result.label),
+          conf: `${(decision.top_probability * 100).toFixed(1)}%`,
+          band: tr(`confidence_${decision.confidence_band}`)
+        })
+      }),
+      el("p", {
+        class: "note",
+        text: tr("result_hybrid_line", {
+          screen: `${(Number(decision.screen_strength || 0) * 100).toFixed(0)}%`,
+          hybrid: `${(Number(decision.hybrid_score || 0) * 100).toFixed(0)}%`
+        })
+      }),
+      el("p", { class: "note", text: tr("result_hybrid_note") }),
+      result.screening.flagged && result.screening.flagged.length
+        ? el("ul", { class: "actions" }, result.screening.flagged.map((group) => el("li", {
+          text: tr("result_screen_group", {
+            name: tr(`screen_group_${group.id}`),
+            hits: group.hitCount,
+            min: group.minHits,
+            trigger: group.trigger === "red_flag"
+              ? tr("screen_trigger_red", { items: (group.redHits || []).join(", ") })
+              : tr("screen_trigger_threshold", { min: group.minHits })
+          })
+        })))
+        : el("p", { class: "note", text: tr("result_screen_none") }),
+      result.screening.yes_ids && result.screening.yes_ids.length
+        ? el("p", { class: "note", text: tr("result_yes_items", { items: result.screening.yes_ids.join(", ") }) })
+        : null
+    ])
+    : null;
   return el("section", {}, [
     title("h1", "list", tr("page_result")),
     el("p", { class: "lede", text: tr("result_caption") }),
+    conflictBanner,
+    screenCard,
     el("div", { class: "card story-card" }, [
       title("h2", "decision", tr("visit_title")),
-      el("p", { class: "story", text: resultStory(result) }),
+      el("p", { class: "story", text: resultStory(result, decision) }),
       el("p", { class: "note", text: tr("result_next") })
     ]),
     title("h2", "scale", tr("body")),
@@ -985,37 +1606,37 @@ function renderResult() {
       metric("user", tr("bmi_category"), named("bmi", body.category), body.category.toLowerCase())
     ]),
     el("p", { class: "note", text: tr("bmi_formula") }),
-    el("div", { class: `risk risk-${result.risk_level.toLowerCase()}` }, [
-      icon(CLASS_ICONS[result.label] || RISK_ICONS[result.risk_level]),
+    el("div", { class: `risk risk-${heroTone}` }, [
+      icon(CLASS_ICONS[result.label] || RISK_ICONS[riskLevel]),
       el("div", {}, [
-        el("p", { class: "risk-kicker", text: tr("risk_word", { level: named("risk", result.risk_level) }) }),
-        el("p", { class: "risk-title", text: named("class", result.label) })
+        el("p", { class: "risk-kicker", text: tr("result_model_kicker") }),
+        el("p", { class: "risk-title", text: named("class", result.label) }),
+        el("p", { class: "note", text: tr("confidence_line", {
+          conf: `${(decision.top_probability * 100).toFixed(1)}%`,
+          band: tr(`confidence_${decision.confidence_band}`)
+        }) }),
+        el("p", {
+          class: `action-line action-${decision.conflict ? "conflict" : riskLevel.toLowerCase()}`,
+          text: tr("result_next_action", { action: tr(actionKey) })
+        })
       ])
     ]),
+    decision.notes && decision.notes.includes("screen_boost")
+      ? el("p", { class: "banner-info", text: tr("screen_boost_note") })
+      : null,
     title("h2", "bars", tr("probabilities")),
-    el("div", { class: "card bars" }, CLASS_ORDER.map((label) => barRow(
-      named("class", label),
-      result.probabilities[label],
-      `${(result.probabilities[label] * 100).toFixed(1)}%`,
-      COLORS[label],
-      CLASS_ICONS[label],
-      true
-    ))),
+    el("p", { class: "note", text: tr("probabilities_caption") }),
+    probabilitySpider(result.probabilities),
     title("h2", "pulse", tr("importance")),
     el("p", { class: "note", text: tr("importance_caption") }),
-    el("div", { class: "card bars" }, result.importances.map((item) => barRow(
-      named("feature", item.feature),
-      item.importance / maxImportance,
-      `${(item.importance * 100).toFixed(1)}%`,
-      "#2563EB",
-      FEATURE_ICONS[item.feature]
-    ))),
+    importanceRankCard(importanceRows),
     title("h2", "compare", tr("comparison")),
     el("p", { class: "note", text: tr("comparison_caption") }),
     result.factors && result.factors.length
       ? el("ul", { class: "card actions" }, result.factors.map((factor) => el("li", { text: factorText(factor) })))
       : el("p", { class: "banner-info", text: tr("no_factors") }),
-    reduceRisk(result, advice),
+    reduceRisk(result, decision),
+    renderFeedbackPanel(result, decision),
     result.support_notes && result.support_notes.length
       ? el("div", {}, [
         title("h2", "alert", tr("outside")),
@@ -1027,16 +1648,79 @@ function renderResult() {
   ]);
 }
 
-function reduceRisk(result, advice) {
-  const tone = TONES[result.label] || "low";
+function renderFeedbackPanel(result, decision) {
+  const server = state.feedbackStats;
+  const local = feedbackStats();
+  const stats = server && server.total != null ? server : local;
+  const rateText = stats.rate == null && !stats.total
+    ? tr("feedback_empty")
+    : tr("feedback_rate", {
+      useful: stats.useful || 0,
+      total: stats.total || 0,
+      percent: stats.rate == null ? "—" : `${(Number(stats.rate) * 100).toFixed(0)}%`
+    });
+  const noteInput = el("textarea", {
+    id: "feedback-note",
+    rows: "3",
+    maxlength: "500",
+    placeholder: tr("feedback_note_ph")
+  });
+  if (state.feedbackBusy) {
+    noteInput.setAttribute("disabled", "disabled");
+  }
+  const actions = el("div", { class: "step-actions" }, [
+    el("button", {
+      type: "button",
+      class: "primary",
+      disabled: state.feedbackBusy ? "disabled" : null,
+      onclick: () => submitFeedback(true, noteInput.value)
+    }, [icon("check"), el("span", { text: tr("feedback_yes") })]),
+    el("button", {
+      type: "button",
+      class: "secondary",
+      disabled: state.feedbackBusy ? "disabled" : null,
+      onclick: () => submitFeedback(false, noteInput.value)
+    }, [icon("alert"), el("span", { text: tr("feedback_no") })])
+  ]);
+  const savedText = !state.feedbackNotice
+    ? null
+    : state.feedbackNotice.source === "server"
+      ? (state.feedbackNotice.useful ? tr("feedback_saved_yes_server") : tr("feedback_saved_no_server"))
+      : (state.feedbackNotice.useful ? tr("feedback_saved_yes") : tr("feedback_saved_no"));
+  return el("section", { class: "card" }, [
+    title("h2", "rows", tr("feedback_title")),
+    el("p", { class: "lede", text: tr("feedback_lead") }),
+    el("p", { class: "note", text: tr("feedback_context", {
+      model: named("class", result.label),
+      screen: named("class", decision.screen_class),
+      action: tr(nextActionKey(decision))
+    }) }),
+    noteInput,
+    actions,
+    savedText ? el("p", {
+      class: state.feedbackNotice.useful ? "banner-ok" : "banner-info",
+      text: savedText
+    }) : null,
+    el("p", { class: "note", text: rateText }),
+    server && server.meets_usefulness_criterion
+      ? el("p", { class: "banner-ok", text: tr("feedback_criterion_met") })
+      : null,
+    el("p", { class: "note", text: tr("feedback_privacy") })
+  ]);
+}
+
+function reduceRisk(result, decision) {
+  const riskLevel = decision.risk_level;
+  const tone = classTone(result.label);
+  const actionKey = nextActionKey(decision);
   return el("section", { class: `card reduce-risk tone-${tone}` }, [
-    title("h2", RISK_ICONS[result.risk_level] || "shield", tr("reduce_title")),
+    title("h2", CLASS_ICONS[result.label] || RISK_ICONS[riskLevel] || "shield", tr("reduce_title")),
     el("p", { class: "lede", text: tr("reduce_lead", {
       label: named("class", result.label),
-      risk: named("risk", result.risk_level)
+      action: tr(actionKey)
     }) }),
-    el("p", { text: advice.decision }),
-    el("ol", { class: "actions" }, advice.actions.map((action) => el("li", { text: action })))
+    el("p", { text: decision.decision }),
+    el("ol", { class: "actions" }, decision.actions.map((action) => el("li", { text: action })))
   ]);
 }
 
@@ -1059,6 +1743,120 @@ function barRow(label, fraction, value, color, iconName, paintLabel) {
     el("div", { class: "bar-track" }, [fill]),
     el("span", { class: "bar-value", text: value })
   ]);
+}
+
+function topImportanceRows(importances, limit) {
+  const ranked = (importances || []).slice().sort((a, b) => b.importance - a.importance);
+  const top = ranked.slice(0, limit);
+  const rest = ranked.slice(limit);
+  const restSum = rest.reduce((sum, item) => sum + Number(item.importance || 0), 0);
+  const rows = top.map((item) => ({
+    key: item.feature,
+    label: named("feature", item.feature),
+    importance: item.importance,
+    iconName: FEATURE_ICONS[item.feature]
+  }));
+  if (restSum > 0) {
+    rows.push({
+      key: "__other__",
+      label: tr("importance_other"),
+      importance: restSum,
+      iconName: "dots"
+    });
+  }
+  return rows;
+}
+
+function importanceRankCard(rows) {
+  return el("div", { class: "card rank-list" }, rows.map((row, index) => el("div", { class: "rank-row" }, [
+    el("span", { class: "rank-index", text: String(index + 1) }),
+    el("span", { class: "rank-label" }, [
+      row.iconName ? icon(row.iconName) : null,
+      el("span", { text: row.label })
+    ]),
+    el("strong", { class: "rank-value", text: `${(row.importance * 100).toFixed(1)}%` })
+  ])));
+}
+
+function probabilitySpider(probabilities) {
+  const size = 280;
+  const center = size / 2;
+  const radius = 92;
+  const values = CLASS_ORDER.map((label) => Math.max(0, Math.min(1, Number(probabilities[label] || 0))));
+  const angleAt = (index) => (-Math.PI / 2) + (index * 2 * Math.PI) / CLASS_ORDER.length;
+  const pointAt = (index, fraction) => {
+    const angle = angleAt(index);
+    return [
+      center + Math.cos(angle) * radius * fraction,
+      center + Math.sin(angle) * radius * fraction
+    ];
+  };
+  const rings = [0.25, 0.5, 0.75, 1].map((fraction) => {
+    const points = CLASS_ORDER.map((_, index) => pointAt(index, fraction).join(",")).join(" ");
+    return elSvg("polygon", {
+      points,
+      class: "spider-ring"
+    });
+  });
+  const axes = CLASS_ORDER.map((_, index) => {
+    const [x, y] = pointAt(index, 1);
+    return elSvg("line", {
+      x1: String(center),
+      y1: String(center),
+      x2: String(x),
+      y2: String(y),
+      class: "spider-axis"
+    });
+  });
+  const areaPoints = values.map((value, index) => pointAt(index, value).join(",")).join(" ");
+  const dots = values.map((value, index) => {
+    const [x, y] = pointAt(index, value);
+    return elSvg("circle", {
+      cx: String(x),
+      cy: String(y),
+      r: "4.5",
+      fill: COLORS[CLASS_ORDER[index]]
+    });
+  });
+  const labels = CLASS_ORDER.map((label, index) => {
+    const [x, y] = pointAt(index, 1.28);
+    return el("div", {
+      class: "spider-label",
+      style: `left:${(x / size) * 100}%;top:${(y / size) * 100}%`
+    }, [
+      el("span", { class: "spider-swatch", style: `background:${COLORS[label]}` }),
+      el("span", { text: `${named("class", label)} ${(values[index] * 100).toFixed(1)}%` })
+    ]);
+  });
+  const svg = elSvg("svg", {
+    viewBox: `0 0 ${size} ${size}`,
+    class: "spider-svg",
+    role: "img",
+    "aria-label": tr("probabilities")
+  }, [
+    ...rings,
+    ...axes,
+    elSvg("polygon", { points: areaPoints, class: "spider-area" }),
+    ...dots
+  ]);
+  return el("div", { class: "card spider-card" }, [
+    el("div", { class: "spider-wrap" }, [svg, ...labels])
+  ]);
+}
+
+function elSvg(tag, attrs, children) {
+  const node = document.createElementNS(SVG_NS, tag);
+  Object.entries(attrs || {}).forEach(([key, value]) => {
+    if (value == null) return;
+    if (key === "class") node.setAttribute("class", value);
+    else node.setAttribute(key, String(value));
+  });
+  const list = children == null ? [] : Array.isArray(children) ? children : [children];
+  list.forEach((child) => {
+    if (child == null || child === false) return;
+    node.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
+  });
+  return node;
 }
 
 function profileTable(profile) {
@@ -1365,6 +2163,10 @@ async function boot() {
   restoreSession();
   const hashed = location.hash.replace("#", "");
   state.page = PAGES.includes(hashed) ? hashed : "home";
+  if (state.page === "assess" && !canAccessDeepAssess()) {
+    state.page = "screen";
+    state.notice = { kind: "warn", text: tr("assess_locked") };
+  }
   document.getElementById("app").replaceChildren(el("p", { class: "loading", text: tr("loading") }));
   try {
     const response = await fetch("/api/meta");

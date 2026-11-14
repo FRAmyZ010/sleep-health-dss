@@ -6,8 +6,10 @@ records and prepares chart data by calling model.py.
 
 from __future__ import annotations
 
+import json
 import math
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +22,7 @@ from model import (
     CLASS_ORDER,
     GENDERS,
     INPUT_LIMITS,
+    EXTRA_OCCUPATIONS,
     OCCUPATIONS,
     OTHER_OCCUPATION,
     TARGET,
@@ -31,14 +34,16 @@ from model import (
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
 ASSET_DIR = ROOT / "assets"
+DATA_DIR = ROOT / "data"
+FEEDBACK_PATH = DATA_DIR / "feedback.jsonl"
 WEIGHT_LIMITS_KG = (30.0, 250.0)
 HEIGHT_LIMITS_CM = (120.0, 220.0)
 HEATMAP_COLUMNS = [
     "Stress Level",
     "Sleep Duration",
     "Quality of Sleep",
-    "Systolic_BP",
-    "Diastolic_BP",
+    "Heart Rate",
+    "Daily Steps",
     "Disorder Risk",
 ]
 
@@ -156,7 +161,7 @@ def meta() -> dict:
     frame = _bundle()["frame"]
     return {
         "genders": list(GENDERS),
-        "occupations": list(OCCUPATIONS) + [OTHER_OCCUPATION],
+        "occupations": list(OCCUPATIONS) + list(EXTRA_OCCUPATIONS) + [OTHER_OCCUPATION],
         "limits": {feature: [float(low), float(high)] for feature, (low, high) in INPUT_LIMITS.items()},
         "weight_limits": list(WEIGHT_LIMITS_KG),
         "height_limits": list(HEIGHT_LIMITS_CM),
@@ -193,19 +198,12 @@ def assess(payload: dict = Body(...)) -> JSONResponse | dict:
         "Physical Activity Level": payload.get("Physical Activity Level"),
         "Stress Level": payload.get("Stress Level"),
         "Daily Steps": payload.get("Daily Steps"),
-        "Systolic_BP": payload.get("Systolic_BP"),
-        "Diastolic_BP": payload.get("Diastolic_BP"),
         "Heart Rate": payload.get("Heart Rate"),
     }
     try:
         result = predict_record(_bundle(), model_payload)
     except InputError as exc:
-        items = []
-        for message in exc.errors:
-            if "higher than diastolic" in message:
-                items.append({"code": "bp_order"})
-            else:
-                items.append({"code": "model", "message": message})
+        items = [{"code": "model", "message": message} for message in exc.errors]
         return JSONResponse(status_code=400, content={"errors": items})
 
     body = {
@@ -227,6 +225,68 @@ def assess(payload: dict = Body(...)) -> JSONResponse | dict:
         },
         "body": body,
     })
+
+
+def _read_feedback_rows() -> list[dict]:
+    """Load local JSONL feedback entries for the usefulness criterion."""
+
+    if not FEEDBACK_PATH.is_file():
+        return []
+    rows: list[dict] = []
+    for line in FEEDBACK_PATH.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            item = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def _feedback_stats(rows: list[dict]) -> dict:
+    useful = sum(1 for row in rows if row.get("useful") is True)
+    total = len(rows)
+    return {
+        "total": total,
+        "useful": useful,
+        "rate": (useful / total) if total else None,
+        "meets_usefulness_criterion": (useful / total) >= 0.80 if total else False,
+    }
+
+
+@app.get("/api/feedback")
+def feedback_stats() -> dict:
+    """Return the local usefulness rate from stored demo feedback."""
+
+    return sanitize(_feedback_stats(_read_feedback_rows()))
+
+
+@app.post("/api/feedback", response_model=None)
+def feedback_create(payload: dict = Body(...)) -> JSONResponse | dict:
+    """Append one usefulness vote for workflow step 10 (local file only)."""
+
+    if "useful" not in payload or not isinstance(payload.get("useful"), bool):
+        return JSONResponse(status_code=400, content={"errors": [{"code": "useful_required"}]})
+
+    entry = {
+        "at": datetime.now(timezone.utc).isoformat(),
+        "useful": bool(payload["useful"]),
+        "note": str(payload.get("note") or "").strip()[:500],
+        "model_label": str(payload.get("model_label") or "")[:64],
+        "screen_class": str(payload.get("screen_class") or "")[:64],
+        "risk_level": str(payload.get("risk_level") or "")[:32],
+        "top_probability": payload.get("top_probability"),
+        "hybrid_score": payload.get("hybrid_score"),
+        "conflict": payload.get("conflict"),
+    }
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with FEEDBACK_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    rows = _read_feedback_rows()
+    return sanitize({"saved": True, "entry": entry, "stats": _feedback_stats(rows)})
 
 
 @app.post("/api/eda")

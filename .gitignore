@@ -6,3 +6,5 @@ venv/
 mytoken.txt
 *token*.txt
 artifacts/
+data/feedback.jsonl
+data/*.jsonl

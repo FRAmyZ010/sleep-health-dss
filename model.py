@@ -30,7 +30,7 @@ DATA_CANDIDATES = [
 ARTIFACT_DIR = ROOT / "artifacts"
 PIPELINE_PATH = ARTIFACT_DIR / "sleep_disorder_pipeline.joblib"
 METRICS_PATH = ARTIFACT_DIR / "cv_metrics.json"
-MODEL_VERSION = "1"
+MODEL_VERSION = "2"
 
 TARGET = "Sleep Disorder"
 CLASS_ORDER = ["None", "Insomnia", "Sleep Apnea"]
@@ -45,8 +45,6 @@ NUMERIC = [
     "Stress Level",
     "Heart Rate",
     "Daily Steps",
-    "Systolic_BP",
-    "Diastolic_BP",
 ]
 FEATURES = CATEGORICAL + NUMERIC
 RAW_NUMERIC = [
@@ -74,6 +72,9 @@ OCCUPATIONS = [
     "Teacher",
 ]
 OTHER_OCCUPATION = "Other"
+# Allowed in the form but absent from the training table (one-hot unknown).
+EXTRA_OCCUPATIONS = ["Student"]
+ALLOWED_OCCUPATIONS = set(OCCUPATIONS) | {OTHER_OCCUPATION} | set(EXTRA_OCCUPATIONS)
 BMI_CATEGORIES = ["Underweight", "Normal", "Overweight", "Obese"]
 
 # Widget bounds for the assessment form. Wider than the training sample so a
@@ -85,8 +86,6 @@ INPUT_LIMITS = {
     "Physical Activity Level": (0, 180),
     "Stress Level": (1, 10),
     "Daily Steps": (0, 20000),
-    "Systolic_BP": (80, 200),
-    "Diastolic_BP": (40, 130),
     "Heart Rate": (40, 140),
 }
 
@@ -98,8 +97,6 @@ DISPLAY_NAMES = {
     "Stress Level": "Stress level",
     "Heart Rate": "Heart rate",
     "Daily Steps": "Daily steps",
-    "Systolic_BP": "Systolic blood pressure",
-    "Diastolic_BP": "Diastolic blood pressure",
     "Gender": "Gender",
     "Occupation": "Occupation",
     "BMI Category": "BMI category",
@@ -167,7 +164,11 @@ def load_raw_dataframe() -> pd.DataFrame:
 
 
 def prepare_frame(raw: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """Engineer blood pressure and BMI, then keep rows that can be modeled."""
+    """Normalize BMI labels and keep rows that can be modeled.
+
+    Blood pressure stays in the CSV for reference but is excluded from the
+    model so deep-assessment inputs can come from general smart-watch metrics.
+    """
 
     frame = raw.copy()
     bmi = frame["BMI Category"].astype(str).str.strip()
@@ -182,16 +183,6 @@ def prepare_frame(raw: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
     for column in RAW_NUMERIC:
         frame[column] = pd.to_numeric(frame[column].replace({"": pd.NA}), errors="coerce")
-
-    blood_pressure = (
-        frame["Blood Pressure"]
-        .astype(str)
-        .str.strip()
-        .str.replace(" ", "", regex=False)
-        .str.split("/", n=1, expand=True)
-    )
-    frame["Systolic_BP"] = pd.to_numeric(blood_pressure[0], errors="coerce")
-    frame["Diastolic_BP"] = pd.to_numeric(blood_pressure[1], errors="coerce")
 
     target = frame[TARGET].astype(str).str.strip()
     missing_target = target.eq("") | target.str.lower().isin(["nan", "none", "<na>"])
@@ -349,7 +340,7 @@ def coerce_record(payload: dict) -> dict:
         record["Gender"] = gender
 
     occupation = str(payload.get("Occupation", "")).strip()
-    if occupation not in OCCUPATIONS and occupation != OTHER_OCCUPATION:
+    if occupation not in ALLOWED_OCCUPATIONS:
         errors.append("Occupation is not one of the supported roles.")
     else:
         record["Occupation"] = occupation
@@ -368,8 +359,6 @@ def coerce_record(payload: dict) -> dict:
         "Physical Activity Level",
         "Stress Level",
         "Daily Steps",
-        "Systolic_BP",
-        "Diastolic_BP",
         "Heart Rate",
     }
     for feature, (low, high) in INPUT_LIMITS.items():
@@ -377,11 +366,6 @@ def coerce_record(payload: dict) -> dict:
         if value is None:
             continue
         record[feature] = int(round(value)) if feature in integer_fields else float(value)
-
-    systolic = record.get("Systolic_BP")
-    diastolic = record.get("Diastolic_BP")
-    if systolic is not None and diastolic is not None and systolic <= diastolic:
-        errors.append("Systolic blood pressure must be higher than diastolic blood pressure.")
 
     if errors:
         raise InputError(errors)
@@ -633,8 +617,6 @@ def _pretty_number(feature: str, value: float) -> str:
     units = {
         "Physical Activity Level": "min/day",
         "Heart Rate": "bpm",
-        "Systolic_BP": "mmHg",
-        "Diastolic_BP": "mmHg",
         "Age": "years",
     }
     number = f"{value:.0f}" if abs(value - round(value)) < 1e-6 else f"{value:.1f}"

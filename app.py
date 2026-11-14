@@ -17,10 +17,12 @@ import streamlit as st
 
 from model import (
     CLASS_ORDER,
+    EXTRA_OCCUPATIONS,
     FEATURES,
     GENDERS,
     INPUT_LIMITS,
     OCCUPATIONS,
+    OTHER_OCCUPATION,
     TARGET,
     InputError,
     get_bundle,
@@ -46,16 +48,16 @@ HEATMAP_COLUMNS = [
     "Stress Level",
     "Sleep Duration",
     "Quality of Sleep",
-    "Systolic_BP",
-    "Diastolic_BP",
+    "Heart Rate",
+    "Daily Steps",
     "Disorder Risk",
 ]
 HEATMAP_LABELS = {
     "Stress Level": "Stress level",
     "Sleep Duration": "Sleep duration",
     "Quality of Sleep": "Sleep quality",
-    "Systolic_BP": "Systolic BP",
-    "Diastolic_BP": "Diastolic BP",
+    "Heart Rate": "Heart rate",
+    "Daily Steps": "Daily steps",
     "Disorder Risk": "Disorder risk",
 }
 PLOTLY_CONFIG = {"displaylogo": False, "responsive": True}
@@ -561,6 +563,7 @@ LABELS = {
         "job": {job: job for job in (
             "Accountant", "Doctor", "Engineer", "Lawyer", "Manager", "Nurse",
             "Sales Representative", "Salesperson", "Scientist", "Software Engineer", "Teacher",
+            "Student", "Other",
         )},
         "feature": {
             "Age": "Age",
@@ -604,6 +607,8 @@ LABELS = {
             "Scientist": "นักวิทยาศาสตร์",
             "Software Engineer": "วิศวกรซอฟต์แวร์",
             "Teacher": "ครู",
+            "Student": "นักเรียน/นักศึกษา",
+            "Other": "อื่นๆ",
         },
         "feature": {
             "Age": "อายุ",
@@ -938,10 +943,11 @@ def render_assessment(bundle: dict) -> None:
             step=1,
             key="assess_age",
         )
+        occupation_choices = list(OCCUPATIONS) + list(EXTRA_OCCUPATIONS) + [OTHER_OCCUPATION]
         occupation = identity[2].selectbox(
             tr("occupation"),
-            OCCUPATIONS,
-            index=OCCUPATIONS.index("Nurse"),
+            occupation_choices,
+            index=occupation_choices.index("Nurse"),
             format_func=lambda value: named("job", value),
             key="assess_occupation",
         )
@@ -1016,25 +1022,7 @@ def render_assessment(bundle: dict) -> None:
 
     st.subheader(tr("cardio"))
     with st.container(border=True):
-        sys_col, dia_col, hr_col = st.columns(3)
-        systolic = sys_col.number_input(
-            tr("systolic"),
-            min_value=_low("Systolic_BP"),
-            max_value=_high("Systolic_BP"),
-            value=120,
-            step=1,
-            help=tr("bp_help"),
-            key="assess_systolic",
-        )
-        diastolic = dia_col.number_input(
-            tr("diastolic"),
-            min_value=_low("Diastolic_BP"),
-            max_value=_high("Diastolic_BP"),
-            value=80,
-            step=1,
-            key="assess_diastolic",
-        )
-        heart_rate = hr_col.number_input(
+        heart_rate = st.number_input(
             tr("heart_rate"),
             min_value=_low("Heart Rate"),
             max_value=_high("Heart Rate"),
@@ -1056,8 +1044,6 @@ def render_assessment(bundle: dict) -> None:
             "Physical Activity Level": int(activity),
             "Stress Level": int(stress),
             "Daily Steps": int(steps),
-            "Systolic_BP": int(systolic),
-            "Diastolic_BP": int(diastolic),
             "Heart Rate": int(heart_rate),
         }
         try:
@@ -1065,10 +1051,7 @@ def render_assessment(bundle: dict) -> None:
         except InputError as error:
             st.error(tr("score_failed"))
             for message in error.errors:
-                if "higher than diastolic" in message:
-                    st.markdown(f"- {tr('bp_order')}")
-                else:
-                    st.markdown(f"- {message}")
+                st.markdown(f"- {message}")
             if st.session_state.get("assessment_result"):
                 st.caption(tr("kept_result"))
         else:
