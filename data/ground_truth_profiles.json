@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "title": "Reference assessment profiles for course ground-truth checks",
+  "disclaimer": "These profiles are curated demo cases with expected labels for screening/model comparison. They are not clinician-confirmed diagnoses. Kaggle Sleep Disorder labels remain the proxy ground truth for model CV metrics.",
+  "profiles": [
+    {
+      "id": "screen-none-snore-only",
+      "kind": "screen",
+      "title": "Snoring alone stays None",
+      "expected_screen_class": "None",
+      "screening_yes": [2],
+      "rationale": "One apnea item below threshold and no red-flag."
+    },
+    {
+      "id": "screen-unknown-partner",
+      "kind": "screen",
+      "title": "Unknown partner items do not count as hits",
+      "expected_screen_class": "None",
+      "screening_yes": [],
+      "screening_unknown": [2, 3],
+      "rationale": "Unknown on snoring/stop-breathing should not flag a class."
+    },
+    {
+      "id": "screen-alone-proxy-apnea",
+      "kind": "screen",
+      "title": "Self-observable apnea proxies",
+      "expected_screen_class": "Sleep Apnea",
+      "screening_yes": [4, 8],
+      "screening_unknown": [2, 3],
+      "rationale": "Choking/gasping + dry mouth meet apnea threshold for people living alone."
+    },
+    {
+      "id": "screen-insomnia-threshold",
+      "kind": "screen",
+      "title": "Insomnia threshold (≥2 of 1/6/9)",
+      "expected_screen_class": "Insomnia",
+      "screening_yes": [1, 6],
+      "rationale": "Sleep-onset difficulty and frequent waking."
+    },
+    {
+      "id": "screen-apnea-threshold",
+      "kind": "screen",
+      "title": "Apnea threshold without red-flag",
+      "expected_screen_class": "Sleep Apnea",
+      "screening_yes": [2, 5],
+      "rationale": "Snoring plus witnessed restless sleep items."
+    },
+    {
+      "id": "screen-apnea-red-flag",
+      "kind": "screen",
+      "title": "Apnea red-flag stop-breathing",
+      "expected_screen_class": "Sleep Apnea",
+      "screening_yes": [3],
+      "rationale": "Single red-flag item forces Sleep Apnea."
+    },
+    {
+      "id": "deep-apnea-stopbang-leaning",
+      "kind": "deep_assess",
+      "title": "Male, older, obese apnea-leaning profile",
+      "expected_label": "Sleep Apnea",
+      "expected_screen_class": "Sleep Apnea",
+      "screening_yes": [3],
+      "form": {
+        "Gender": "Male",
+        "Age": 55,
+        "Occupation": "Nurse",
+        "BMI Category": "Obese",
+        "Sleep Duration": 7.0,
+        "Quality of Sleep": 7,
+        "Physical Activity Level": 60,
+        "Stress Level": 5,
+        "Daily Steps": 6000,
+        "Heart Rate": 72
+      },
+      "body": { "weight_kg": 102, "height_cm": 170 },
+      "rationale": "Aligned with STOP-Bang-leaning signals available in the deep form (male, age>50, BMI obese). Pre-screen red-flag included."
+    },
+    {
+      "id": "deep-insomnia-short-sleep-stress",
+      "kind": "deep_assess",
+      "title": "Short sleep + high stress insomnia-leaning profile",
+      "expected_label": "Insomnia",
+      "expected_screen_class": "Insomnia",
+      "screening_yes": [1, 6],
+      "form": {
+        "Gender": "Female",
+        "Age": 47,
+        "Occupation": "Teacher",
+        "BMI Category": "Normal",
+        "Sleep Duration": 5.5,
+        "Quality of Sleep": 4,
+        "Physical Activity Level": 50,
+        "Stress Level": 8,
+        "Daily Steps": 7000,
+        "Heart Rate": 70
+      },
+      "body": { "weight_kg": 65, "height_cm": 170 },
+      "rationale": "Short sleep and high stress with insomnia pre-screen hits; BMI kept normal to avoid apnea confounders."
+    },
+    {
+      "id": "deep-none-balanced",
+      "kind": "deep_assess",
+      "title": "Balanced low-risk lifestyle profile",
+      "expected_label": "None",
+      "expected_screen_class": "None",
+      "screening_yes": [],
+      "form": {
+        "Gender": "Female",
+        "Age": 40,
+        "Occupation": "Nurse",
+        "BMI Category": "Normal",
+        "Sleep Duration": 7.5,
+        "Quality of Sleep": 8,
+        "Physical Activity Level": 70,
+        "Stress Level": 4,
+        "Daily Steps": 8000,
+        "Heart Rate": 68
+      },
+      "body": { "weight_kg": 62, "height_cm": 168 },
+      "rationale": "Voluntary deep path after None pre-screen; lifestyle values near healthy adult ranges."
+    },
+    {
+      "id": "deep-apnea-high-bmi",
+      "kind": "deep_assess",
+      "title": "High BMI apnea-leaning without red-flag screen",
+      "expected_label": "Sleep Apnea",
+      "expected_screen_class": "Sleep Apnea",
+      "screening_yes": [2, 8],
+      "form": {
+        "Gender": "Male",
+        "Age": 52,
+        "Occupation": "Doctor",
+        "BMI Category": "Obese",
+        "Sleep Duration": 6.5,
+        "Quality of Sleep": 5,
+        "Physical Activity Level": 40,
+        "Stress Level": 6,
+        "Daily Steps": 4500,
+        "Heart Rate": 78
+      },
+      "body": { "weight_kg": 98, "height_cm": 172 },
+      "rationale": "Obese male with snoring/dry-mouth screen hits."
+    },
+    {
+      "id": "deep-insomnia-onset",
+      "kind": "deep_assess",
+      "title": "Onset and early-waking insomnia profile",
+      "expected_label": "Insomnia",
+      "expected_screen_class": "Insomnia",
+      "screening_yes": [1, 9],
+      "form": {
+        "Gender": "Female",
+        "Age": 35,
+        "Occupation": "Engineer",
+        "BMI Category": "Normal",
+        "Sleep Duration": 5.8,
+        "Quality of Sleep": 3,
+        "Physical Activity Level": 45,
+        "Stress Level": 7,
+        "Daily Steps": 5500,
+        "Heart Rate": 74
+      },
+      "body": { "weight_kg": 58, "height_cm": 165 },
+      "rationale": "Difficulty falling asleep and early waking with poor sleep quality."
+    },
+    {
+      "id": "deep-conflict-candidate",
+      "kind": "deep_assess",
+      "title": "Screen apnea vs possibly softer model features",
+      "expected_label": "Sleep Apnea",
+      "expected_screen_class": "Sleep Apnea",
+      "screening_yes": [3, 4],
+      "form": {
+        "Gender": "Female",
+        "Age": 29,
+        "Occupation": "Accountant",
+        "BMI Category": "Normal",
+        "Sleep Duration": 7.2,
+        "Quality of Sleep": 7,
+        "Physical Activity Level": 65,
+        "Stress Level": 4,
+        "Daily Steps": 7500,
+        "Heart Rate": 66
+      },
+      "body": { "weight_kg": 60, "height_cm": 170 },
+      "rationale": "Strong apnea red-flags on screen while lifestyle features look milder; useful for conflict/decision-layer demos."
+    }
+  ]
+}

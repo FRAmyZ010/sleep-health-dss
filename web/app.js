@@ -7,6 +7,7 @@ const PROFILE_FIELDS = [
   "Physical Activity Level", "Stress Level", "Daily Steps", "Heart Rate"
 ];
 const SESSION_KEY = "sleep-health-web-v4";
+const ANON_KEY = "sleep-health-anon-v1";
 
 const SCREENING_SECTIONS = [
   { id: "before", ids: [1] },
@@ -95,9 +96,15 @@ const state = {
     triage: null,
     view: "questions"
   },
-  feedbackStats: null,
-  feedbackNotice: null,
-  feedbackBusy: false
+  logs: null,
+  logsPeople: null,
+  logsPerson: "",
+  logsBusy: false,
+  logsDetail: null,
+  logsNotice: null,
+  trust: null,
+  trustBusy: false,
+  trustNotice: null
 };
 
 function classTone(label) {
@@ -120,7 +127,6 @@ function resetDemoState() {
   state.step = 0;
   state.busy = false;
   state.screening = { answers: {}, triage: null, view: "questions" };
-  state.feedbackNotice = null;
   state.filters = null;
   state.eda = null;
   state.page = "home";
@@ -176,8 +182,16 @@ const ICONS = {
   rows: [["path", { d: "M4 7h16M4 12h16M4 17h10" }]],
   home: [["path", { d: "M4 11.5 12 4.5l8 7V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z" }]]
 };
-const PAGES = ["home", "screen", "assess", "result", "eda"];
-const NAV_ICONS = { home: "home", screen: "list", assess: "clipboard", result: "list", eda: "bars" };
+const PAGES = ["home", "screen", "assess", "result", "logs", "trust", "eda"];
+const NAV_ICONS = {
+  home: "home",
+  screen: "list",
+  assess: "clipboard",
+  result: "list",
+  logs: "rows",
+  trust: "shield",
+  eda: "bars"
+};
 const CLASS_ICONS = { None: "check", Insomnia: "moon", "Sleep Apnea": "lungs" };
 const RISK_ICONS = { Low: "shield", Medium: "moon", High: "alert" };
 const FEATURE_ICONS = {
@@ -266,6 +280,21 @@ function el(tag, attrs, children) {
   return node;
 }
 
+function getAnonId() {
+  try {
+    let id = localStorage.getItem(ANON_KEY);
+    if (!id) {
+      id = (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `anon-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      localStorage.setItem(ANON_KEY, id);
+    }
+    return id;
+  } catch (_error) {
+    return `anon-${Date.now()}`;
+  }
+}
+
 function saveSession() {
   sessionStorage.setItem(SESSION_KEY, JSON.stringify({
     lang: state.lang,
@@ -277,6 +306,61 @@ function saveSession() {
     step: state.step,
     screening: state.screening
   }));
+}
+
+async function postAssessmentLog(result, decision, formPayload) {
+  if (!result || result.log_id) return;
+  const triage = state.screening.triage;
+  const answers = {};
+  SCREENING_IDS.forEach((id) => {
+    answers[String(id)] = Object.prototype.hasOwnProperty.call(state.screening.answers, id)
+      ? state.screening.answers[id]
+      : null;
+  });
+  const entry = {
+    anon_id: getAnonId(),
+    screening_answers: answers,
+    screening_triage: triage
+      ? {
+        topClass: triage.topClass,
+        deepEligible: triage.deepEligible,
+        yesCount: triage.yesCount,
+        unknownCount: triage.unknownCount,
+        flagged: triage.flagged,
+        standards: result.standards || triage.standards || null
+      }
+      : null,
+    form_payload: formPayload,
+    model_result: {
+      label: result.label,
+      risk_level: result.risk_level,
+      probabilities: result.probabilities,
+      factors: result.factors,
+      support_notes: result.support_notes
+    },
+    standards: result.standards || (triage && triage.standards) || null,
+    decision,
+    profile: result.profile || null,
+    body: result.body || null,
+    screen_class: decision.screen_class,
+    model_label: result.label,
+    risk_level: decision.risk_level,
+    yes_count: triage ? triage.yesCount : null,
+    unknown_count: triage ? triage.unknownCount : null
+  };
+  try {
+    const response = await fetch("/api/logs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(entry)
+    });
+    const body = await response.json();
+    if (response.ok && body.row && body.row.id != null) {
+      result.log_id = body.row.id;
+    }
+  } catch (_error) {
+    // Logging must not block the demo UI.
+  }
 }
 
 function restoreSession() {
@@ -400,7 +484,8 @@ function errorText(item) {
 }
 
 function canAccessDeepAssess() {
-  return Boolean(state.screening.triage && state.screening.triage.deepEligible);
+  // Deep assess opens after any completed triage, including None (optional path).
+  return Boolean(state.screening.triage);
 }
 
 function showPage(page) {
@@ -414,7 +499,8 @@ function showPage(page) {
   saveSession();
   render();
   if (page === "eda") fetchEda();
-  if (page === "result") fetchFeedbackStats();
+  if (page === "logs") fetchLogs();
+  if (page === "trust") fetchTrust();
 }
 
 function render() {
@@ -526,9 +612,13 @@ function renderMain() {
       ? renderScreen()
       : state.page === "result"
         ? renderResult()
-        : state.page === "eda"
-          ? renderEda()
-          : renderAssess();
+        : state.page === "logs"
+          ? renderLogs()
+          : state.page === "trust"
+            ? renderTrust()
+            : state.page === "eda"
+              ? renderEda()
+              : renderAssess();
   return el("main", { class: "main" }, [
     el("div", { class: "topbar" }, [
       el("div", { class: "topbar-tools" }, [
@@ -569,13 +659,171 @@ function evaluateScreening(answers) {
     };
   }).filter((group) => group.flagged);
   flagged.sort((a, b) => b.hitCount - a.hitCount || b.severity - a.severity);
-  return {
+  const triage = {
     flagged,
     deepEligible: flagged.length > 0,
     topClass: flagged.length ? SCREEN_CLASS[flagged[0].id] : "None",
     yesCount: SCREENING_IDS.filter((id) => answers[id] === true).length,
     unknownCount: SCREENING_IDS.filter((id) => answers[id] === "unknown").length
   };
+  // Parallel standard scores do not replace rule triage / deep unlock.
+  triage.standards = buildStandardScores(answers, null);
+  return triage;
+}
+
+function answerYesNo(answers, id) {
+  const value = answers[id];
+  if (value === true) return true;
+  if (value === false) return false;
+  return null;
+}
+
+function stopBangBand(score, answered) {
+  if (answered === 0) return "unavailable";
+  if (score <= 2) return "low";
+  if (score <= 4) return "intermediate";
+  return "high";
+}
+
+function isiBand(score) {
+  if (score <= 7) return "none";
+  if (score <= 14) return "subthreshold";
+  if (score <= 21) return "moderate";
+  return "severe";
+}
+
+function buildStandardScores(answers, context) {
+  const ctx = context || {};
+  const stopItems = [
+    { key: "S", source: "screen_q2", value: answerYesNo(answers, 2) },
+    { key: "T", source: "screen_q11", value: answerYesNo(answers, 11) },
+    { key: "O", source: "screen_q3", value: answerYesNo(answers, 3) },
+    { key: "P", source: "bp_unavailable", value: null, unavailable: true },
+    {
+      key: "B",
+      source: "bmi_gt_35",
+      value: ctx.bmi == null ? null : Number(ctx.bmi) > 35,
+      unavailable: ctx.bmi == null
+    },
+    {
+      key: "A",
+      source: "age_gt_50",
+      value: ctx.age == null ? null : Number(ctx.age) > 50,
+      unavailable: ctx.age == null
+    },
+    { key: "N", source: "neck_unavailable", value: null, unavailable: true },
+    {
+      key: "G",
+      source: "gender_male",
+      value: ctx.gender == null ? null : String(ctx.gender) === "Male",
+      unavailable: ctx.gender == null
+    }
+  ];
+  let stopScore = 0;
+  let stopAnswered = 0;
+  const stopMissing = [];
+  stopItems.forEach((item) => {
+    if (item.unavailable || item.value == null) {
+      stopMissing.push(item.key);
+      return;
+    }
+    stopAnswered += 1;
+    if (item.value) stopScore += 1;
+  });
+
+  const isiParts = [];
+  const pushIsi = (id, points, source) => {
+    const value = answerYesNo(answers, id);
+    if (value == null) {
+      isiParts.push({ source, points: null, unavailable: true });
+      return;
+    }
+    isiParts.push({ source, points: value ? points : 0, unavailable: false });
+  };
+  pushIsi(1, 2, "screen_q1");
+  pushIsi(6, 2, "screen_q6");
+  pushIsi(9, 2, "screen_q9");
+  pushIsi(11, 2, "screen_q11");
+  pushIsi(13, 1, "screen_q13");
+  let qualityPoints = null;
+  if (ctx.quality != null && Number.isFinite(Number(ctx.quality))) {
+    const quality = Number(ctx.quality);
+    qualityPoints = Math.max(0, Math.min(4, Math.round(((10 - quality) / 10) * 4)));
+    isiParts.push({ source: "quality_of_sleep", points: qualityPoints, unavailable: false });
+  } else {
+    isiParts.push({ source: "quality_of_sleep", points: null, unavailable: true });
+  }
+  const isiScore = isiParts.reduce((sum, part) => sum + (part.points || 0), 0);
+  const isiAnswered = isiParts.filter((part) => !part.unavailable).length;
+
+  return {
+    mode: "parallel",
+    note: "Rule triage still gates deep unlock. STOP-Bang and ISI-inspired scores are supporting evidence only.",
+    stop_bang: {
+      score: stopScore,
+      answered: stopAnswered,
+      max: 8,
+      missing: stopMissing,
+      band: stopBangBand(stopScore, stopAnswered),
+      items: stopItems.map((item) => ({
+        key: item.key,
+        source: item.source,
+        hit: item.unavailable || item.value == null ? null : Boolean(item.value),
+        unavailable: Boolean(item.unavailable || item.value == null)
+      }))
+    },
+    isi_inspired: {
+      score: isiScore,
+      answered: isiAnswered,
+      max: 13,
+      band: isiBand(isiScore),
+      parts: isiParts
+    }
+  };
+}
+
+function refreshStandards(triage, context) {
+  if (!triage) return null;
+  triage.standards = buildStandardScores(state.screening.answers, context);
+  return triage.standards;
+}
+
+function renderStandardsPanel(standards, opts) {
+  if (!standards) return null;
+  const stop = standards.stop_bang;
+  const isi = standards.isi_inspired;
+  const stopItems = el("ul", { class: "actions" }, stop.items.map((item) => el("li", {
+    text: item.unavailable
+      ? tr("standards_item_na", { key: item.key, source: tr(item.source) })
+      : tr("standards_item_hit", {
+        key: item.key,
+        source: tr(item.source),
+        hit: item.hit ? tr("standards_hit_yes") : tr("standards_hit_no")
+      })
+  })));
+  return el("section", { class: "card" }, [
+    title("h2", "shield", tr("standards_title")),
+    el("p", { class: "lede", text: tr("standards_lead") }),
+    el("p", { class: "note", text: tr("standards_parallel_note") }),
+    el("p", {
+      text: tr("standards_stopbang_line", {
+        score: stop.score,
+        answered: stop.answered,
+        band: tr(`standards_stopbang_${stop.band}`)
+      })
+    }),
+    el("p", { class: "note", text: tr("standards_stopbang_missing", { missing: stop.missing.join(", ") || "—" }) }),
+    stopItems,
+    el("p", {
+      text: tr("standards_isi_line", {
+        score: isi.score,
+        answered: isi.answered,
+        band: tr(`standards_isi_${isi.band}`)
+      })
+    }),
+    el("p", { class: "note", text: tr("standards_isi_note") }),
+    opts && opts.footer ? el("p", { class: "note", text: opts.footer }) : null
+  ]);
 }
 
 function confidenceBand(probability) {
@@ -601,7 +849,13 @@ function screenEvidence(triage) {
   };
 }
 
-function buildDecision(result, triage) {
+function escalateRiskLevel(riskLevel) {
+  if (riskLevel === "Low") return "Medium";
+  if (riskLevel === "Medium") return "High";
+  return "High";
+}
+
+function buildDecision(result, triage, logPrior) {
   const label = result.label;
   const topProb = Number(result.probabilities[label] || 0);
   const band = confidenceBand(topProb);
@@ -653,10 +907,23 @@ function buildDecision(result, triage) {
     }
   }
 
+  // Anonymous log prior: escalate caution only; never lower risk.
+  if (logPrior && logPrior.escalate) {
+    const before = riskLevel;
+    riskLevel = escalateRiskLevel(riskLevel);
+    notes.push("log_prior_boost");
+    if (before !== riskLevel && !conflict) {
+      if (riskLevel === "High" && adviceKey === "None") adviceKey = "uncertain_none";
+    }
+  }
+
   const agree = screenClass === label;
-  const hybridScore = conflict
+  let hybridScore = conflict
     ? 1
     : Math.min(1, 0.6 * topProb + 0.4 * (agree ? evidence.strength : evidence.strength * 0.25));
+  if (logPrior && logPrior.escalate) {
+    hybridScore = Math.min(1, hybridScore + 0.05);
+  }
 
   const pack = I18N.ADVICE[state.lang][adviceKey] || I18N.ADVICE[state.lang][label];
   return {
@@ -672,84 +939,22 @@ function buildDecision(result, triage) {
     decision: pack.decision,
     actions: pack.actions.slice(),
     advice_key: adviceKey,
-    notes
+    notes,
+    log_prior: logPrior || null
   };
 }
 
-const FEEDBACK_KEY = "sleep-health-feedback-v1";
-
-function loadFeedbackLog() {
+async function fetchLogPrior(query) {
   try {
-    const rows = JSON.parse(localStorage.getItem(FEEDBACK_KEY) || "[]");
-    return Array.isArray(rows) ? rows : [];
-  } catch (_error) {
-    return [];
-  }
-}
-
-function feedbackStats() {
-  const rows = loadFeedbackLog();
-  const useful = rows.filter((row) => row.useful === true).length;
-  return {
-    total: rows.length,
-    useful,
-    rate: rows.length ? useful / rows.length : null
-  };
-}
-
-async function submitFeedback(useful, note) {
-  const result = state.result;
-  if (!result || state.feedbackBusy) return;
-  const decision = result.decision || buildDecision(result, state.screening.triage);
-  const entry = {
-    at: new Date().toISOString(),
-    useful: Boolean(useful),
-    note: String(note || "").trim().slice(0, 500),
-    model_label: result.label,
-    screen_class: decision.screen_class,
-    risk_level: decision.risk_level,
-    top_probability: decision.top_probability,
-    hybrid_score: decision.hybrid_score,
-    conflict: decision.conflict
-  };
-  const rows = loadFeedbackLog();
-  rows.push(entry);
-  localStorage.setItem(FEEDBACK_KEY, JSON.stringify(rows.slice(-200)));
-  state.feedbackBusy = true;
-  state.feedbackNotice = null;
-  render();
-  try {
-    const response = await fetch("/api/feedback", {
+    const response = await fetch("/api/logs/prior", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(entry)
+      body: JSON.stringify(query)
     });
-    const body = await response.json();
-    if (response.ok && body.stats) {
-      state.feedbackStats = body.stats;
-      state.feedbackNotice = { kind: "ok", useful: entry.useful, source: "server" };
-    } else {
-      state.feedbackNotice = { kind: "ok", useful: entry.useful, source: "local" };
-    }
+    if (!response.ok) return null;
+    return await response.json();
   } catch (_error) {
-    state.feedbackNotice = { kind: "ok", useful: entry.useful, source: "local" };
-  }
-  state.feedbackBusy = false;
-  saveSession();
-  render();
-}
-
-async function fetchFeedbackStats() {
-  try {
-    const response = await fetch("/api/feedback");
-    if (!response.ok) return;
-    state.feedbackStats = await response.json();
-  } catch (_error) {
-    state.feedbackStats = null;
-  }
-  if (state.page === "result") {
-    const main = document.querySelector(".main");
-    if (main) main.replaceWith(renderMain());
+    return null;
   }
 }
 
@@ -925,9 +1130,14 @@ function renderScreenTriage(triage) {
   } else {
     actions.push(el("button", {
       type: "button",
-      class: "primary",
+      class: "secondary",
       onclick: () => showPage("home")
     }, [icon("home"), el("span", { text: tr("screen_done") })]));
+    actions.push(el("button", {
+      type: "button",
+      class: "primary",
+      onclick: () => showPage("assess")
+    }, [icon("clipboard"), el("span", { text: tr("screen_go_deep_optional") })]));
   }
 
   const tone = triage.deepEligible ? "high" : "low";
@@ -947,6 +1157,9 @@ function renderScreenTriage(triage) {
       groups: triage.flagged.length,
       unknown: triage.unknownCount || 0
     }) }),
+    triage.deepEligible
+      ? null
+      : el("p", { class: "banner-info", text: tr("screen_optional_deep_note") }),
     el("p", { class: "note", text: tr("screen_rule_policy") }),
     triage.unknownCount
       ? el("p", { class: "note", text: tr("screen_unknown_note", { unknown: triage.unknownCount }) })
@@ -1495,26 +1708,45 @@ async function submitAssess() {
         lines: lines.concat(state.result ? [tr("kept_result")] : [])
       };
     } else {
-      const decision = buildDecision(body, state.screening.triage);
+      const standards = refreshStandards(state.screening.triage, {
+        age: Number(state.form.age),
+        gender: state.form.gender,
+        bmi: body.body && body.body.bmi,
+        quality: Number(state.form.quality)
+      });
+      const triage = state.screening.triage;
+      const screenClass = triage && triage.deepEligible ? triage.topClass : "None";
+      const logPrior = await fetchLogPrior({
+        screen_class: screenClass,
+        model_label: body.label,
+        age: Number(state.form.age),
+        bmi_category: body.body && body.body.category,
+        min_similar: 3,
+        age_window: 10
+      });
+      const decision = buildDecision(body, triage, logPrior);
       const yesIds = SCREENING_IDS.filter((id) => state.screening.answers[id] === true);
       state.result = Object.assign({}, body, {
         decision,
-        screening: state.screening.triage
+        standards,
+        log_prior: logPrior,
+        screening: triage
           ? {
-            top_class: state.screening.triage.topClass,
-            flagged: state.screening.triage.flagged.map((group) => ({
+            top_class: triage.topClass,
+            flagged: triage.flagged.map((group) => ({
               id: group.id,
               hitCount: group.hitCount,
               minHits: group.minHits,
               trigger: group.trigger,
               redHits: group.redHits
             })),
-            yesCount: state.screening.triage.yesCount,
-            yes_ids: yesIds
+            yesCount: triage.yesCount,
+            yes_ids: yesIds,
+            standards
           }
           : null
       });
-      state.feedbackNotice = null;
+      await postAssessmentLog(state.result, decision, payload);
       state.notice = {
         kind: "ok",
         code: "saved",
@@ -1523,7 +1755,8 @@ async function submitAssess() {
         label: body.label,
         risk: decision.risk_level,
         conflict: decision.conflict,
-        actionKey: nextActionKey(decision)
+        actionKey: nextActionKey(decision),
+        logged: Boolean(state.result.log_id)
       };
     }
   } catch (_error) {
@@ -1636,76 +1869,46 @@ function renderResult() {
       ? el("ul", { class: "card actions" }, result.factors.map((factor) => el("li", { text: factorText(factor) })))
       : el("p", { class: "banner-info", text: tr("no_factors") }),
     reduceRisk(result, decision),
-    renderFeedbackPanel(result, decision),
-    result.support_notes && result.support_notes.length
-      ? el("div", {}, [
-        title("h2", "alert", tr("outside")),
-        el("div", { class: "stack" }, result.support_notes.map((note) => el("p", { class: "banner-warn", text: noteText(note) })))
-      ])
-      : null,
+    renderLogPriorPanel(result.log_prior || decision.log_prior),
     title("h2", "table", tr("submitted")),
     profileTable(result.profile)
   ]);
 }
 
-function renderFeedbackPanel(result, decision) {
-  const server = state.feedbackStats;
-  const local = feedbackStats();
-  const stats = server && server.total != null ? server : local;
-  const rateText = stats.rate == null && !stats.total
-    ? tr("feedback_empty")
-    : tr("feedback_rate", {
-      useful: stats.useful || 0,
-      total: stats.total || 0,
-      percent: stats.rate == null ? "—" : `${(Number(stats.rate) * 100).toFixed(0)}%`
-    });
-  const noteInput = el("textarea", {
-    id: "feedback-note",
-    rows: "3",
-    maxlength: "500",
-    placeholder: tr("feedback_note_ph")
-  });
-  if (state.feedbackBusy) {
-    noteInput.setAttribute("disabled", "disabled");
+function renderLogPriorPanel(prior) {
+  if (!prior) {
+    return el("section", { class: "card" }, [
+      title("h2", "rows", tr("log_prior_title")),
+      el("p", { class: "note", text: tr("log_prior_unavailable") })
+    ]);
   }
-  const actions = el("div", { class: "step-actions" }, [
-    el("button", {
-      type: "button",
-      class: "primary",
-      disabled: state.feedbackBusy ? "disabled" : null,
-      onclick: () => submitFeedback(true, noteInput.value)
-    }, [icon("check"), el("span", { text: tr("feedback_yes") })]),
-    el("button", {
-      type: "button",
-      class: "secondary",
-      disabled: state.feedbackBusy ? "disabled" : null,
-      onclick: () => submitFeedback(false, noteInput.value)
-    }, [icon("alert"), el("span", { text: tr("feedback_no") })])
-  ]);
-  const savedText = !state.feedbackNotice
-    ? null
-    : state.feedbackNotice.source === "server"
-      ? (state.feedbackNotice.useful ? tr("feedback_saved_yes_server") : tr("feedback_saved_no_server"))
-      : (state.feedbackNotice.useful ? tr("feedback_saved_yes") : tr("feedback_saved_no"));
+  const rateText = (value) => (value == null ? "—" : `${(Number(value) * 100).toFixed(0)}%`);
   return el("section", { class: "card" }, [
-    title("h2", "rows", tr("feedback_title")),
-    el("p", { class: "lede", text: tr("feedback_lead") }),
-    el("p", { class: "note", text: tr("feedback_context", {
-      model: named("class", result.label),
-      screen: named("class", decision.screen_class),
-      action: tr(nextActionKey(decision))
-    }) }),
-    noteInput,
-    actions,
-    savedText ? el("p", {
-      class: state.feedbackNotice.useful ? "banner-ok" : "banner-info",
-      text: savedText
-    }) : null,
-    el("p", { class: "note", text: rateText }),
-    server && server.meets_usefulness_criterion
-      ? el("p", { class: "banner-ok", text: tr("feedback_criterion_met") })
-      : null,
-    el("p", { class: "note", text: tr("feedback_privacy") })
+    title("h2", "rows", tr("log_prior_title")),
+    el("p", { class: "lede", text: tr("log_prior_lead") }),
+    el("p", { class: "note", text: prior.note || tr("log_prior_note") }),
+    el("p", {
+      text: tr("log_prior_match", {
+        screen: named("class", prior.match && prior.match.screen_class),
+        model: named("class", prior.match && prior.match.model_label),
+        age: prior.match && prior.match.age != null ? prior.match.age : "—",
+        window: prior.match && prior.match.age_window != null ? prior.match.age_window : 10,
+        bmi: prior.match && prior.match.bmi_category ? named("bmi", prior.match.bmi_category) : "—"
+      })
+    }),
+    el("p", {
+      text: tr("log_prior_counts", {
+        similar: prior.similar_count || 0,
+        min: prior.min_similar || 3,
+        conflict: rateText(prior.conflict_rate),
+        high: rateText(prior.high_risk_rate)
+      })
+    }),
+    prior.eligible
+      ? (prior.escalate
+        ? el("p", { class: "banner-warn", text: tr("log_prior_escalate") })
+        : el("p", { class: "banner-ok", text: tr("log_prior_stable") }))
+      : el("p", { class: "banner-info", text: tr("log_prior_insufficient") })
   ]);
 }
 
@@ -1872,6 +2075,517 @@ function profileTable(profile) {
   });
   table.append(body);
   return el("div", { class: "card chart-scroll" }, [table]);
+}
+
+function formatLogTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString(state.lang === "th" ? "th-TH" : "en-GB");
+}
+
+function shortAnon(value) {
+  const text = String(value || "");
+  if (text.length <= 12) return text || "—";
+  return `${text.slice(0, 8)}…`;
+}
+
+async function fetchLogPeople() {
+  try {
+    const response = await fetch("/api/logs/people?limit=200");
+    if (!response.ok) throw new Error("people_failed");
+    state.logsPeople = await response.json();
+    if (!state.logsPerson && state.logsPeople.people && state.logsPeople.people.length) {
+      state.logsPerson = state.logsPeople.people[0].anon_id;
+    }
+  } catch (_error) {
+    state.logsPeople = null;
+  }
+}
+
+async function fetchLogs() {
+  state.logsBusy = true;
+  state.logsNotice = null;
+  if (state.page === "logs") render();
+  try {
+    await fetchLogPeople();
+    const params = new URLSearchParams({ limit: "200", enrich: "true" });
+    if (state.logsPerson) params.set("anon_id", state.logsPerson);
+    const response = await fetch(`/api/logs?${params.toString()}`);
+    if (!response.ok) throw new Error("logs_failed");
+    state.logs = await response.json();
+  } catch (_error) {
+    state.logs = null;
+    state.logsNotice = { kind: "error", text: tr("logs_load_failed") };
+  }
+  state.logsBusy = false;
+  if (state.page === "logs") render();
+}
+
+async function selectLogPerson(anonId) {
+  state.logsPerson = anonId || "";
+  state.logsDetail = null;
+  await fetchLogs();
+}
+
+async function fetchLogDetail(rowId) {
+  state.logsBusy = true;
+  state.logsNotice = null;
+  render();
+  try {
+    const response = await fetch(`/api/logs/${rowId}?enrich=true`);
+    if (!response.ok) throw new Error("detail_failed");
+    state.logsDetail = await response.json();
+  } catch (_error) {
+    state.logsDetail = null;
+    state.logsNotice = { kind: "error", text: tr("logs_detail_failed") };
+  }
+  state.logsBusy = false;
+  if (state.page === "logs") render();
+}
+
+function yesNoLabel(value) {
+  if (value === true || value === "yes") return tr("logs_yes");
+  if (value === false || value === "no") return tr("logs_no");
+  if (value == null) return "—";
+  return String(value);
+}
+
+function numOrDash(value) {
+  if (value == null || value === "") return "—";
+  return String(value);
+}
+
+function matchNumLabel(value) {
+  if (value == null) return "—";
+  return `${numOrDash(value)} · ${yesNoLabel(value === 1 || value === true)}`;
+}
+
+function classCodeLabel(label, code) {
+  const name = label ? named("class", label) : tr("logs_gt_proxy_na");
+  if (code == null || code === "") return name;
+  return `${code} · ${name}`;
+}
+
+function renderPersonLogDetail(detail) {
+  if (!detail) return null;
+  const qRows = [];
+  for (let q = 1; q <= 13; q += 1) {
+    const num = detail[`q${q}_num`];
+    qRows.push(el("tr", {}, [
+      el("td", { text: `Q${q}` }),
+      el("td", { text: tr(`screen_q${q}`) }),
+      el("td", { text: detail[`q${q}`] || "—" }),
+      el("td", { text: numOrDash(num) })
+    ]));
+  }
+  const compareRows = [
+    ["logs_gt_rule", classCodeLabel(detail.gt_rule_class || "None", detail.gt_rule_class_code)],
+    ["logs_gt_proxy", detail.gt_proxy_class
+      ? classCodeLabel(detail.gt_proxy_class, detail.gt_proxy_class_code)
+      : tr("logs_gt_proxy_na")],
+    ["logs_col_screen", classCodeLabel(detail.screen_class || "None", detail.screen_class_code)],
+    ["logs_col_model", classCodeLabel(detail.model_label || "None", detail.model_label_code)],
+    ["logs_col_risk", detail.risk_level
+      ? `${numOrDash(detail.risk_code)} · ${detail.risk_level}`
+      : "—"],
+    ["logs_col_hybrid", detail.hybrid_score != null ? Number(detail.hybrid_score).toFixed(3) : "—"],
+    ["logs_agreement", numOrDash(detail.agreement_score)],
+    ["logs_q_yes_score", numOrDash(detail.questionnaire_yes_score)],
+    ["logs_system_doctor", matchNumLabel(detail.system_see_doctor_num)],
+    ["logs_match_rule_model", matchNumLabel(detail.match_rule_vs_model_num)],
+    ["logs_match_proxy_model", matchNumLabel(detail.match_proxy_vs_model_num)],
+    ["logs_match_rule_proxy", matchNumLabel(detail.match_rule_vs_proxy_num)],
+    ["logs_proxy_n", detail.gt_proxy_similar_count != null ? String(detail.gt_proxy_similar_count) : "—"],
+    ["logs_score_why", detail.score_why_th || detail.score_why || "—"]
+  ].map(([key, value]) => el("tr", {}, [
+    el("td", { text: tr(key) }),
+    el("td", { text: value })
+  ]));
+  return el("section", { class: "card" }, [
+    title("h2", "table", tr("logs_detail_title", { id: detail.id })),
+    el("p", { class: "note", text: tr("logs_detail_anon", { anon: detail.anon_id }) }),
+    el("p", { class: "banner-info", text: tr("logs_gt_explain") }),
+    el("p", { class: "note", text: tr("logs_code_legend") }),
+    title("h3", "list", tr("logs_compare_title")),
+    el("div", { class: "card chart-scroll" }, [
+      el("table", {}, [
+        el("thead", {}, [el("tr", {}, [el("th", { text: tr("field") }), el("th", { text: tr("value") })])]),
+        el("tbody", {}, compareRows)
+      ])
+    ]),
+    title("h3", "clipboard", tr("logs_quest_title")),
+    el("div", { class: "card chart-scroll" }, [
+      el("table", {}, [
+        el("thead", {}, [el("tr", {}, [
+          el("th", { text: tr("logs_q_id") }),
+          el("th", { text: tr("logs_q_text") }),
+          el("th", { text: tr("logs_q_answer") }),
+          el("th", { text: tr("logs_q_num") })
+        ])]),
+        el("tbody", {}, qRows)
+      ])
+    ]),
+    title("h3", "rows", tr("logs_raw_title")),
+    el("pre", { class: "logs-json", text: JSON.stringify({
+      form_payload: detail.form_payload,
+      decision: detail.decision,
+      profile: detail.profile,
+      gt_proxy_match: detail.gt_proxy_match,
+      score_why: detail.score_why,
+      score_why_th: detail.score_why_th,
+      agreement_score: detail.agreement_score
+    }, null, 2) })
+  ]);
+}
+
+function pctRate(rate) {
+  if (rate == null || !Number.isFinite(Number(rate))) return "—";
+  return `${(Number(rate) * 100).toFixed(1)}%`;
+}
+
+function metricMeanStd(stats) {
+  if (!stats) return "—";
+  return `${Number(stats.mean).toFixed(3)} ± ${Number(stats.std).toFixed(3)}`;
+}
+
+async function fetchTrust() {
+  state.trustBusy = true;
+  state.trustNotice = null;
+  if (state.page === "trust") render();
+  try {
+    const response = await fetch("/api/trust");
+    if (!response.ok) throw new Error("trust_failed");
+    state.trust = await response.json();
+  } catch (_error) {
+    state.trust = null;
+    state.trustNotice = { kind: "error", text: tr("trust_load_failed") };
+  }
+  state.trustBusy = false;
+  if (state.page === "trust") render();
+}
+
+function renderTrust() {
+  if (state.trustBusy && !state.trust) {
+    return el("section", {}, [
+      title("h1", "shield", tr("page_trust")),
+      el("p", { class: "loading", text: tr("loading") })
+    ]);
+  }
+  if (!state.trust) {
+    return el("section", {}, [
+      title("h1", "shield", tr("page_trust")),
+      state.trustNotice
+        ? el("p", { class: "banner-warn", text: state.trustNotice.text })
+        : el("p", { class: "banner-info", text: tr("trust_empty") }),
+      el("div", { class: "step-actions" }, [
+        el("button", {
+          type: "button",
+          class: "primary",
+          onclick: () => fetchTrust()
+        }, [icon("back"), el("span", { text: tr("trust_refresh") })])
+      ])
+    ]);
+  }
+
+  const proxy = state.trust.kaggle_proxy || {};
+  const spot = state.trust.in_sample_spotcheck || {};
+  const reference = state.trust.reference_profiles || {};
+  const refRows = reference.rows || [];
+
+  const proxyTable = el("table", {}, [
+    el("thead", {}, [el("tr", {}, [
+      el("th", { text: tr("trust_metric") }),
+      el("th", { text: tr("trust_value") })
+    ])]),
+    el("tbody", {}, [
+      el("tr", {}, [el("td", { text: tr("trust_rows") }), el("td", { text: String(proxy.row_count ?? "—") })]),
+      el("tr", {}, [el("td", { text: tr("trust_folds") }), el("td", { text: String(proxy.folds ?? "—") })]),
+      el("tr", {}, [el("td", { text: "Accuracy" }), el("td", { text: metricMeanStd(proxy.accuracy) })]),
+      el("tr", {}, [el("td", { text: "Macro F1" }), el("td", { text: metricMeanStd(proxy.f1_macro) })]),
+      el("tr", {}, [el("td", { text: tr("trust_age_range") }), el("td", {
+        text: Array.isArray(proxy.observed_age_range)
+          ? `${proxy.observed_age_range[0]}–${proxy.observed_age_range[1]}`
+          : "—"
+      })]),
+      el("tr", {}, [el("td", { text: tr("trust_class_counts") }), el("td", {
+        text: proxy.class_counts
+          ? Object.entries(proxy.class_counts).map(([k, v]) => `${named("class", k)} ${v}`).join(" · ")
+          : "—"
+      })])
+    ])
+  ]);
+
+  const refTable = el("table", { class: "logs-table" }, [
+    el("thead", {}, [el("tr", {}, [
+      el("th", { text: tr("trust_col_id") }),
+      el("th", { text: tr("trust_col_kind") }),
+      el("th", { text: tr("trust_col_screen") }),
+      el("th", { text: tr("trust_col_model") }),
+      el("th", { text: tr("trust_col_match") })
+    ])]),
+    el("tbody", {}, refRows.length
+      ? refRows.map((row) => {
+        const screenText = row.expected_screen_class == null
+          ? "—"
+          : `${row.predicted_screen_class || "—"} / ${row.expected_screen_class}`;
+        const modelText = row.expected_label == null
+          ? "—"
+          : `${row.predicted_label || "—"} / ${row.expected_label}`;
+        const ok = (row.screen_match !== false) && (row.model_match !== false);
+        const matchLabel = row.kind === "screen"
+          ? (row.screen_match ? tr("trust_match_yes") : tr("trust_match_no"))
+          : (ok ? tr("trust_match_yes") : tr("trust_match_no"));
+        return el("tr", {}, [
+          el("td", { class: "mono", text: row.id || "—" }),
+          el("td", { text: row.kind || "—" }),
+          el("td", { text: screenText }),
+          el("td", { text: modelText }),
+          el("td", { text: matchLabel })
+        ]);
+      })
+      : [el("tr", {}, [el("td", { colspan: "5", text: tr("trust_no_profiles") })])])
+  ]);
+
+  return el("section", {}, [
+    title("h1", "shield", tr("page_trust")),
+    el("p", { class: "lede", text: tr("trust_lead") }),
+    el("p", { class: "banner-info", text: state.trust.disclaimer || tr("trust_disclaimer") }),
+    el("div", { class: "step-actions" }, [
+      el("button", {
+        type: "button",
+        class: "secondary",
+        disabled: state.trustBusy ? "disabled" : null,
+        onclick: () => fetchTrust()
+      }, [icon("back"), el("span", { text: tr("trust_refresh") })])
+    ]),
+    title("h2", "table", tr("trust_proxy_title")),
+    el("p", { class: "note", text: proxy.note || tr("trust_proxy_note") }),
+    el("div", { class: "card chart-scroll" }, [proxyTable]),
+    proxy.caveat ? el("p", { class: "banner-warn", text: tr("trust_proxy_caveat") }) : null,
+    title("h2", "bars", tr("trust_spot_title")),
+    el("p", { class: "note", text: spot.note || tr("trust_spot_note") }),
+    el("p", {
+      text: tr("trust_spot_rate", {
+        correct: spot.correct || 0,
+        total: spot.total || 0,
+        rate: pctRate(spot.rate)
+      })
+    }),
+    title("h2", "clipboard", tr("trust_ref_title")),
+    el("p", { class: "note", text: reference.disclaimer || tr("trust_ref_note") }),
+    el("p", {
+      text: tr("trust_ref_screen_rate", {
+        correct: (reference.screen && reference.screen.correct) || 0,
+        total: (reference.screen && reference.screen.total) || 0,
+        rate: pctRate(reference.screen && reference.screen.rate)
+      })
+    }),
+    el("p", {
+      text: tr("trust_ref_model_rate", {
+        correct: (reference.model && reference.model.correct) || 0,
+        total: (reference.model && reference.model.total) || 0,
+        rate: pctRate(reference.model && reference.model.rate)
+      })
+    }),
+    el("div", { class: "card chart-scroll" }, [refTable]),
+    title("h2", "shield", tr("trust_standards_title")),
+    el("p", { class: "note", text: tr("trust_standards_lead") }),
+    el("ul", { class: "card actions" }, [
+      el("li", { text: tr("trust_standards_rule") }),
+      el("li", { text: tr("trust_standards_isi") }),
+      el("li", { text: tr("trust_standards_missing") })
+    ]),
+    renderDoctorGate(state.trust.doctor_gate),
+    el("p", { class: "note", text: tr("trust_cli_hint") })
+  ]);
+}
+
+function renderDoctorGate(gate) {
+  if (!gate) {
+    return el("section", {}, [
+      title("h2", "alert", tr("trust_doctor_title")),
+      el("p", { class: "note", text: tr("trust_doctor_missing") })
+    ]);
+  }
+  const metricLine = (key, stats) => el("p", {
+    text: tr("trust_doctor_metric", {
+      name: tr(key),
+      agree: stats && stats.agree != null ? stats.agree : 0,
+      total: stats && stats.total != null ? stats.total : 0,
+      rate: pctRate(stats && stats.rate != null ? stats.rate : stats && stats.agreement_rate),
+      precision: pctRate(stats && stats.precision),
+      recall: pctRate(stats && stats.recall)
+    })
+  });
+  const questRows = gate.questionnaire_rows || [];
+  const questTable = el("table", { class: "logs-table" }, [
+    el("thead", {}, [el("tr", {}, [
+      el("th", { text: tr("trust_col_id") }),
+      el("th", { text: tr("trust_doctor_col_gt") }),
+      el("th", { text: tr("trust_doctor_col_screen") }),
+      el("th", { text: tr("trust_doctor_col_clinical") }),
+      el("th", { text: tr("trust_col_match") })
+    ])]),
+    el("tbody", {}, questRows.length
+      ? questRows.map((row) => {
+        const screenOk = row.agree_screen !== false;
+        const clinicalOk = row.agree_clinical == null ? null : row.agree_clinical !== false;
+        const match = clinicalOk == null
+          ? (screenOk ? tr("trust_match_yes") : tr("trust_match_no"))
+          : ((screenOk && clinicalOk) ? tr("trust_match_yes") : tr("trust_match_no"));
+        return el("tr", {}, [
+          el("td", { class: "mono", text: row.id || "—" }),
+          el("td", { text: row.gt_see_doctor ? tr("trust_doctor_yes") : tr("trust_doctor_no") }),
+          el("td", {
+            text: row.system_screen_flag == null
+              ? "—"
+              : (row.system_screen_flag ? tr("trust_doctor_yes") : tr("trust_doctor_no"))
+          }),
+          el("td", {
+            text: row.system_see_doctor == null
+              ? "—"
+              : (row.system_see_doctor ? tr("trust_doctor_yes") : tr("trust_doctor_no"))
+          }),
+          el("td", { text: match })
+        ]);
+      })
+      : [el("tr", {}, [el("td", { colspan: "5", text: tr("trust_no_profiles") })])])
+  ]);
+  return el("section", {}, [
+    title("h2", "alert", tr("trust_doctor_title")),
+    el("p", { class: "lede", text: tr("trust_doctor_lead") }),
+    el("p", { class: "note", text: gate.note || tr("trust_doctor_note") }),
+    metricLine("trust_doctor_a", gate.kaggle_vs_model_disorder),
+    metricLine("trust_doctor_b", gate.kaggle_vs_clinical_gate),
+    metricLine("trust_doctor_c", gate.questionnaire_screen_vs_gt),
+    metricLine("trust_doctor_d", gate.questionnaire_full_vs_gt),
+    el("p", {
+      class: "note",
+      text: tr("trust_doctor_mismatch", {
+        count: gate.kaggle_mismatch_count || 0
+      })
+    }),
+    title("h3", "clipboard", tr("trust_doctor_quest_title")),
+    el("div", { class: "card chart-scroll" }, [questTable]),
+    el("p", { class: "note", text: tr("trust_doctor_cli", { cmd: gate.cli_hint || "python scripts/check_doctor_gate.py" }) })
+  ]);
+}
+
+function renderLogs() {
+  const rows = (state.logs && state.logs.rows) || [];
+  const total = state.logs ? state.logs.total : 0;
+  const people = (state.logsPeople && state.logsPeople.people) || [];
+  const personSelect = el("select", {
+    id: "logs-person",
+    onchange: (event) => selectLogPerson(event.target.value)
+  }, [
+    el("option", { value: "", text: tr("logs_person_all") }),
+    ...people.map((person) => el("option", {
+      value: person.anon_id,
+      selected: state.logsPerson === person.anon_id ? "selected" : null,
+      text: tr("logs_person_option", {
+        anon: shortAnon(person.anon_id),
+        runs: person.runs
+      })
+    }))
+  ]);
+  if (!state.logsPerson) personSelect.value = "";
+
+  const actions = el("div", { class: "step-actions" }, [
+    el("label", { class: "field", style: "flex:1;margin:0" }, [
+      el("span", { class: "field-label", text: tr("logs_person_label") }),
+      personSelect
+    ]),
+    el("button", {
+      type: "button",
+      class: "secondary",
+      disabled: state.logsBusy ? "disabled" : null,
+      onclick: () => fetchLogs()
+    }, [icon("back"), el("span", { text: tr("logs_refresh") })]),
+    el("a", {
+      class: "button primary",
+      href: "/api/logs/export.csv",
+      download: "assessment_logs.csv"
+    }, [icon("table"), el("span", { text: tr("logs_export") })])
+  ]);
+
+  const table = el("table", { class: "logs-table" }, [
+    el("thead", {}, [
+      el("tr", {}, [
+        el("th", { text: tr("logs_col_id") }),
+        el("th", { text: tr("logs_col_time") }),
+        el("th", { text: tr("logs_col_screen") }),
+        el("th", { text: tr("logs_col_model") }),
+        el("th", { text: tr("logs_gt_rule") }),
+        el("th", { text: tr("logs_gt_proxy") }),
+        el("th", { text: tr("logs_col_risk") }),
+        el("th", { text: tr("logs_match_rule_model") }),
+        el("th", { text: tr("logs_agreement") }),
+        el("th", { text: tr("logs_col_actions") })
+      ])
+    ])
+  ]);
+  const body = el("tbody");
+  if (!rows.length) {
+    body.append(el("tr", {}, [
+      el("td", { colspan: "10", text: state.logsBusy ? tr("loading") : tr("logs_empty") })
+    ]));
+  } else {
+    rows.forEach((row) => {
+      body.append(el("tr", {
+        class: state.logsDetail && state.logsDetail.id === row.id ? "logs-row-active" : ""
+      }, [
+        el("td", { text: String(row.id) }),
+        el("td", { text: formatLogTime(row.created_at) }),
+        el("td", { text: classCodeLabel(row.screen_class || "None", row.screen_class_code) }),
+        el("td", { text: classCodeLabel(row.model_label || "None", row.model_label_code) }),
+        el("td", { text: classCodeLabel(row.gt_rule_class || "None", row.gt_rule_class_code) }),
+        el("td", {
+          text: row.gt_proxy_class
+            ? classCodeLabel(row.gt_proxy_class, row.gt_proxy_class_code)
+            : tr("logs_gt_proxy_na")
+        }),
+        el("td", {
+          text: row.risk_level
+            ? `${numOrDash(row.risk_code)} · ${row.risk_level}`
+            : "—"
+        }),
+        el("td", { text: matchNumLabel(row.match_rule_vs_model_num) }),
+        el("td", { text: numOrDash(row.agreement_score) }),
+        el("td", {}, [
+          el("button", {
+            type: "button",
+            class: "secondary compact",
+            disabled: state.logsBusy ? "disabled" : null,
+            onclick: () => fetchLogDetail(row.id)
+          }, [el("span", { text: tr("logs_view") })])
+        ])
+      ]));
+    });
+  }
+  table.append(body);
+
+  return el("section", {}, [
+    title("h1", "rows", tr("page_logs")),
+    el("p", { class: "lede", text: tr("logs_lead") }),
+    el("p", { class: "note", text: tr("logs_privacy") }),
+    el("p", { class: "note", text: tr("logs_gt_explain") }),
+    actions,
+    state.logsNotice
+      ? el("p", { class: "banner-warn", text: state.logsNotice.text })
+      : null,
+    el("p", {
+      class: "note",
+      text: tr("logs_count_person", {
+        shown: rows.length,
+        total,
+        person: state.logsPerson ? shortAnon(state.logsPerson) : tr("logs_person_all")
+      })
+    }),
+    el("div", { class: "card chart-scroll" }, [table]),
+    renderPersonLogDetail(state.logsDetail)
+  ]);
 }
 
 function renderEda() {

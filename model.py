@@ -80,7 +80,7 @@ BMI_CATEGORIES = ["Underweight", "Normal", "Overweight", "Obese"]
 # Widget bounds for the assessment form. Wider than the training sample so a
 # person can enter a plausible value that the dataset itself does not contain.
 INPUT_LIMITS = {
-    "Age": (18, 65),
+    "Age": (1, 120),
     "Sleep Duration": (3.0, 12.0),
     "Quality of Sleep": (1, 10),
     "Physical Activity Level": (0, 180),
@@ -739,7 +739,7 @@ def _synthesize_dataset(n: int = 400, seed: int = 42) -> pd.DataFrame:
     return pd.DataFrame({
         "Person ID": np.arange(1, n + 1),
         "Gender": rng.choice(["Male", "Female"], size=n),
-        "Age": rng.integers(18, 66, size=n),
+        "Age": rng.integers(1, 121, size=n),
         "Occupation": rng.choice(occupations, size=n),
         "Sleep Duration": np.round(sleep, 1),
         "Quality of Sleep": quality,

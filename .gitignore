@@ -8,3 +8,5 @@ mytoken.txt
 artifacts/
 data/feedback.jsonl
 data/*.jsonl
+data/assessments.db
+data/*.db

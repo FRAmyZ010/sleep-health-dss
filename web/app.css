@@ -324,8 +324,35 @@ input[type="number"], select {
 .stepper button.current { color: #1E3A8A; background: #EFF6FF; border-color: #2563EB; }
 .stepper button:disabled { opacity: 0.45; cursor: default; }
 .step-index { font-size: 0.75rem; letter-spacing: 0.04em; }
-.step-actions { display: flex; gap: 0.6rem; }
+.step-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
 .step-actions .primary, .step-actions .secondary { width: auto; flex: 1; }
+a.primary, a.secondary { text-decoration: none; box-sizing: border-box; }
+button.compact {
+  width: auto;
+  min-height: 2.2rem;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.9rem;
+}
+.logs-table .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.86rem;
+}
+.logs-row-active { background: #EFF6FF; }
+.logs-json {
+  margin: 0.55rem 0 0;
+  padding: 0.85rem 1rem;
+  overflow: auto;
+  max-height: 28rem;
+  border-radius: 12px;
+  border: 1px solid #E2E8F0;
+  background: #F8FAFC;
+  color: #0F172A;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .review-row {
   display: flex;
   justify-content: space-between;

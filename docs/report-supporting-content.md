@@ -73,8 +73,9 @@ flowchart LR
   I --> J
   J --> K[Confidence bands + conflict + screen evidence]
   K --> L[Actions]
-  L --> M[Local feedback log]
-  M -.prototype.-> H
+  L --> M[Anonymous SQLite assessment log]
+  M --> N[Logs page / CSV export / Trust page]
+  N -.future outcomes.-> H
 ```
 
 ### Transformations recorded in code
@@ -89,7 +90,7 @@ flowchart LR
 
 ---
 
-## 3. Ten-step workflow including feedback (Guidance 5.3)
+## 3. Ten-step workflow including audit logging (Guidance 5.3)
 
 ```mermaid
 flowchart TD
@@ -101,30 +102,31 @@ flowchart TD
   S6 --> S7[7. Result interpretation]
   S7 --> S8[8. Decision recommendation]
   S8 --> S9[9. User action]
-  S9 --> S10[10. Feedback and model improvement]
-  S10 -.future data.-> S5
+  S9 --> S10[10. Anonymous log and trust review]
+  S10 -.future outcomes.-> S5
 ```
 
 | Step | What this project does |
 | --- | --- |
 | 1. Data collection | Use the public Kaggle CSV; collect demo inputs from the local web form and pre-screen |
-| 2. Data validation | Check required fields, blood-pressure order, weight/height ranges, complete pre-screen answers |
+| 2. Data validation | Check required fields, weight/height ranges, complete pre-screen answers |
 | 3. Cleaning and preprocessing | Relabel BMI, drop blood pressure from features, preserve `None`, encode and scale features |
-| 4. Feature selection / engineering | Fixed feature set in `model.py` for RF; pre-screen answers stay outside the forest and enter the decision layer |
+| 4. Feature selection / engineering | Fixed feature set in `model.py` for RF; pre-screen answers stay outside the forest and enter the decision layer; STOP-Bang / ISI-inspired scores run in parallel |
 | 5. Model training | `RandomForestClassifier` (`n_estimators=300`, `min_samples_leaf=2`, `class_weight=balanced`, `random_state=42`) |
-| 6. Validation and testing | Stratified 5-fold CV on all 374 rows; report accuracy and macro precision / recall / F1 |
-| 7. Result interpretation | Show class probabilities, feature importance, pre-screen vs model, hybrid score |
+| 6. Validation and testing | Stratified 5-fold CV on all 374 rows; report accuracy and macro precision / recall / F1; `#trust` + `scripts/check_ground_truth.py` |
+| 7. Result interpretation | Show class probabilities, feature importance, pre-screen vs model, hybrid score, parallel standard scores |
 | 8. Decision recommendation | Confidence bands + conflict rules + screen-evidence boost → Low / Medium / High actions |
 | 9. User action | Keep routine, adjust habits, or seek clinical review; clinician remains final decision maker |
-| 10. Feedback and improvement | **Prototype now:** useful / not useful + note on `#result`, mirrored to browser `localStorage` and local server file `data/feedback.jsonl` via `/api/feedback`. Usefulness rate supports the ≥80% criterion. **Not yet:** clinic database or automatic retraining |
+| 10. Anonymous log and trust review | **Now:** after a successful deep assessment, store an anonymous full payload in SQLite (`data/assessments.db`) via `/api/logs`; review on `#logs` / CSV export; inspect proxy GT and reference profiles on `#trust`. **Future work:** user/clinician outcome feedback and automatic retraining are not implemented |
 
 ### Hybrid decision path in the running demo
 
 1. Rule-based pre-screen (threshold or red-flag) → `None` / `Insomnia` / `Sleep Apnea`
-2. Deep form opens only if Insomnia or Sleep Apnea is flagged
+2. Deep form opens after triage is completed (optional continue when result is `None`)
 3. Random Forest scores lifestyle / heart features only
 4. Decision layer merges model probability, confidence band, conflict check, and screen evidence
-5. User can log local feedback for the usefulness criterion
+5. Parallel STOP-Bang / ISI-inspired scores are shown as supporting evidence
+6. Anonymous assessment log + trust page support audit and later comparison
 
 ### Pre-screen flagging rules
 
@@ -176,11 +178,11 @@ Technical criterion:
 - The selected model is successful if stratified 5-fold **macro F1 ≥ 0.80** and **accuracy ≥ 0.85** on the project table.
 - Current Random Forest result: macro F1 **0.885**, accuracy **0.909** → **meets the technical criterion**.
 
-Decision-support criterion:
+Decision-support / audit criterion:
 
-- At least **80%** of local feedback entries mark the recommendation as useful for choosing the next action.
-- **How to measure in the demo:** open `#result` after an assessment and use the Feedback panel; the page shows `useful/total` from `localStorage`.
-- **Status:** fill the final percentage from rehearsal feedback before submission.
+- After rehearsal, the demo can show at least one anonymous assessment row on `#logs` and a trust report on `#trust` (Kaggle proxy CV + reference profiles).
+- **How to measure:** complete one deep assessment, open `#logs`, export CSV; run `python scripts/check_ground_truth.py` or refresh `#trust`.
+- **Future work:** no user/clinician usefulness or outcome feedback loop yet, so the old ≥80% useful-vote criterion is **not** used in the current demo.
 
 ---
 
@@ -209,9 +211,10 @@ Decision-support criterion:
 
 - Synthetic / illustrative source data
 - Small sample and duplicated rows
-- Pre-screen rules are not a validated clinical questionnaire score
+- Pre-screen rules are a course gate; STOP-Bang / ISI-inspired scores are parallel and incomplete (no BP/neck)
 - Pre-screen items are not RF training features; only the decision layer uses them
-- Feedback is browser-local, not a clinic outcomes database
+- Assessment logs are anonymous and local (SQLite), not a clinic outcomes database
+- No user/clinician outcome feedback loop yet
 - Model classes exclude other sleep disorders
 
 ### Ethics and risks
@@ -250,9 +253,9 @@ Shared items for every member:
 
 | Triage class | Rule | Next action |
 | --- | --- | --- |
-| None | Threshold / red-flag not met | Stop; deep assess locked |
-| Insomnia | ≥2 of items 1, 6, 9 | Unlock deep assessment |
-| Sleep Apnea | ≥2 apnea items, or red-flag 3 / 4 / 12 | Unlock deep assessment |
+| None | Threshold / red-flag not met | Summarize; optional deep assess |
+| Insomnia | ≥2 of items 1, 6, 9 | Continue to deep assessment |
+| Sleep Apnea | ≥2 apnea items, or red-flag 3 / 4 / 12 | Continue to deep assessment |
 
 ### Model output + decision layer → action
 
@@ -264,4 +267,4 @@ Shared items for every member:
 | Conflict between pre-screen and model | High | Forced clinical review; do not trust the convenient label |
 | Confidence &lt; 0.40 | Medium/High caution | Increase monitoring; do not treat as clear clearance |
 
-Human approval: a clinician confirms any medical decision. The demo stores optional usefulness feedback in localStorage for step 10 of the workflow.
+Human approval: a clinician confirms any medical decision. Step 10 in the current demo stores an anonymous assessment log in SQLite and exposes `#logs` / `#trust` for audit. User/clinician outcome feedback remains future work.

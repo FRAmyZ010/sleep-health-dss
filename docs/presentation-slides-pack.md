@@ -19,11 +19,32 @@
 
 ลำดับพูดแนะนำ: เฟรม → ดอส → ด๋อย → เบน → บอส → เฟรม (เดโม) → ดอส (ปิด)
 
-รายละเอียดเนื้อหาอังกฤษของแต่ละสไลด์อยู่ด้านล่าง นำไปวางใน PowerPoint / Google Slides ได้เลย
+รายละเอียดเนื้อหาอังกฤษของแต่ละสไลด์อยู่ด้านล่าง นำไปวางใน PowerPoint / Google Slides ได้เลย  
+แต่ละสไลด์มีบล็อก **รูปแบบที่แนะนำ** เพื่อเลือกเลย์เอาต์ตอนลงสไลด์
+
+### คีย์รูปแบบที่ใช้ในแพ็กนี้
+
+| รหัส | ความหมาย | ใช้เมื่อ |
+| --- | --- | --- |
+| `Title` | ชื่อใหญ่กลางจอ + บรรทัดรอง | เปิด / ปิด |
+| `Statement` | ประโยคหลัก 1 บรรทัด + รายการสั้น | นิยามปัญหา / decision statement |
+| `Bullets` | หัวข้อ + บูลเล็ต 3–5 ข้อ | อธิบายสั้น |
+| `Two-col` | สองคอลัมน์ซ้าย–ขวา | เปรียบเทียบ / objectives vs questions |
+| `Table` | ตาราง | stakeholders / dataset / metrics |
+| `Visual-3` | หัวข้อ + รูป/กราฟ 3 ช่อง | EDA |
+| `Flow` | แผนภาพลูกศร / process | workflow / architecture |
+| `Rules` | สองกล่องกฎ + แถบสรุป | decision rules |
+| `Demo` | หมายเลขขั้น + จุดโชว์เดโม | POC ก่อนสลับไปแอป |
+| `Close` | Benefits / Limits / Closing | ปิดท้าย |
 
 ---
 
 ## Slide 1 — Title (เฟรม)
+
+**รูปแบบที่แนะนำ:** `Title`  
+- ชื่อโปรเจกต์ใหญ่กลางจอ  
+- บรรทัดวิชา + สมาชิกใต้ชื่อ  
+- pitch หนึ่งบรรทัดด้านล่าง (ไม่ใส่บูลเล็ต)
 
 **Title:** Sleep Health and Lifestyle Decision Support System  
 **Subtitle:** Final Project · 1501418 Selected Topics in Data Science and AI  
@@ -35,6 +56,10 @@ Speaker note (ไทย): ทักทาย บอกชื่อโปรเ�
 ---
 
 ## Slide 2 — Problem background (ดอส)
+
+**รูปแบบที่แนะนำ:** `Statement` + `Bullets`  
+- บนสุด: decision statement ในกล่องเน้น  
+- ด้านล่าง: บูลเล็ตปัญหา 4 ข้อ (อย่าเกิน)
 
 **Heading:** Problem background  
 **Bullets:**
@@ -50,6 +75,11 @@ The proposed model will help **clinicians and wellness staff** to **classify sle
 
 ## Slide 3 — Justification and evidence (ดอส)
 
+**รูปแบบที่แนะนำ:** `Two-col`  
+- ซ้าย: ทำไมสำคัญ (บูลเล็ต)  
+- ขวา: หลักฐาน 1–2 แหล่ง + citation APA  
+- แถบล่างเล็ก: “Course screening aid — not a medical diagnosis”
+
 **Heading:** Why this problem matters  
 **Bullets:**
 - Sleep disorders raise health risk and reduce daytime function for workers and patients.
@@ -62,6 +92,10 @@ The proposed model will help **clinicians and wellness staff** to **classify sle
 ---
 
 ## Slide 4 — Stakeholders and decision requirements (ดอส)
+
+**รูปแบบที่แนะนำ:** `Table`  
+- ตาราง 4 แถว stakeholder เป็นเนื้อหาหลัก  
+- ใต้ตาราง: decision requirement หนึ่งประโยค
 
 **Heading:** Stakeholders  
 
@@ -77,6 +111,10 @@ The proposed model will help **clinicians and wellness staff** to **classify sle
 ---
 
 ## Slide 5 — Objectives and project questions (ด๋อย)
+
+**รูปแบบที่แนะนำ:** `Two-col`  
+- ซ้าย: Objectives 1–4 (เลขลำดับ)  
+- ขวา: Project questions (บูลเล็ตสั้น)
 
 **Heading:** Objectives and questions  
 
@@ -95,6 +133,11 @@ The proposed model will help **clinicians and wellness staff** to **classify sle
 ---
 
 ## Slide 6 — Dataset overview (ด๋อย)
+
+**รูปแบบที่แนะนำ:** `Table`  
+- ตาราง key–value เต็มสไลด์  
+- แถวล่าง: class counts เป็นตัวเลขเด่น (None 219 / Insomnia 77 / Sleep Apnea 78)  
+- ใส่ badge เล็ก: “Synthetic / illustrative”
 
 **Heading:** Dataset overview  
 
@@ -115,6 +158,10 @@ The proposed model will help **clinicians and wellness staff** to **classify sle
 
 ## Slide 7 — Data quality and preprocessing (ด๋อย)
 
+**รูปแบบที่แนะนำ:** `Bullets` + callout  
+- บูลเล็ตขั้นตอน clean 5–6 ข้อ  
+- callout สีอ่อน: “265 duplicate feature rows → CV may look optimistic”
+
 **Heading:** Data quality and preprocessing  
 **Bullets:**
 - Preserve literal `None` labels during CSV import.
@@ -127,6 +174,11 @@ The proposed model will help **clinicians and wellness staff** to **classify sle
 ---
 
 ## Slide 8 — Exploratory data analysis (เบน)
+
+**รูปแบบที่แนะนำ:** `Visual-3`  
+- หัวข้อสั้นด้านบน  
+- กลางจอ: แคปกราฟจาก `#eda` สามช่องเท่ากัน  
+- ใต้แต่ละรูป: คำอธิบาย 1 บรรทัด (ไม่ใส่บูลเล็ตยาว)
 
 **Heading:** Exploratory data analysis  
 **Show 3 visuals from the app (`#eda`):**
@@ -145,6 +197,11 @@ Speaker note (ไทย): แคปจากหน้า Explore จริง �
 
 ## Slide 9 — Data model (เบน)
 
+**รูปแบบที่แนะนำ:** `Flow`  
+- แผนภาพแนวนอน: Source → Features → Target → Pre-screen layer  
+- บูลเล็ตสั้นใต้แผนภาพได้ไม่เกิน 4 ข้อ  
+- ดึง Mermaid จาก `docs/report-supporting-content.md` §2 มาวาดใหม่ในสไลด์
+
 **Heading:** Data model  
 **Bullets:**
 - Source entity: person-level sleep and lifestyle record
@@ -159,6 +216,10 @@ Speaker note (ไทย): แคปจากหน้า Explore จริง �
 
 ## Slide 10 — Proposed decision model (บอส)
 
+**รูปแบบที่แนะนำ:** `Table` + แถบเหตุผลด้านล่าง  
+- ตาราง Component | Design เป็นหลัก  
+- ใต้ตาราง 2 บรรทัด: Why RF + Honest limit
+
 **Heading:** Proposed decision model (hybrid)  
 
 | Component | Design |
@@ -169,7 +230,7 @@ Speaker note (ไทย): แคปจากหน้า Explore จริง �
 | Output | Class, probabilities, screen evidence, hybrid score |
 | Decision | Confidence bands, conflict rules, screen boost |
 | Action | Keep routine / adjust habits / seek clinician |
-| Feedback | Usefulness log on `#result` → localStorage + `data/feedback.jsonl` (step 10 prototype) |
+| Audit log | Anonymous SQLite log after assess → `#logs` / CSV; trust report on `#trust` (step 10 prototype). Outcome feedback = future work |
 
 **Why Random Forest:** mixed feature types, nonlinear patterns, class imbalance, and built-in importance for explanation.  
 **Honest limit:** the 13 pre-screen items are not RF training features; they adjust the decision layer.
@@ -178,16 +239,26 @@ Speaker note (ไทย): แคปจากหน้า Explore จริง �
 
 ## Slide 11 — Model workflow / architecture (บอส)
 
+**รูปแบบที่แนะนำ:** `Flow`  
+- แถวบน: 10 ขั้นเป็นลูกศรสั้น (ตัวเลข + คำเดียว)  
+- แถวล่าง: architecture one-liner ในกล่องสรุป  
+- เน้นขั้น 1 (triage before deep) และขั้น 10 (anonymous log + trust)
+
 **Heading:** Ten-step workflow  
 List briefly:
-1. Collect → 2. Validate → 3. Clean → 4. Engineer features → 5. Train → 6. Validate → 7. Interpret → 8. Recommend → 9. Act → 10. Feedback / improve
+1. Collect → 2. Validate → 3. Clean → 4. Engineer features → 5. Train → 6. Validate → 7. Interpret → 8. Recommend → 9. Act → 10. Anonymous log / trust review
 
 **Architecture one-liner:**  
-Rule triage gates the deep form; RF scores lifestyle/heart features; the decision layer merges probability bands, conflicts, and screen evidence; feedback is logged locally.
+Rule triage gates the deep form (optional continue on None); RF scores lifestyle/heart features; the decision layer merges probability bands, conflicts, and screen evidence; parallel STOP-Bang/ISI scores support trust; anonymous logs land in SQLite.
 
 ---
 
 ## Slide 12 — Evaluation and success criteria (บอส)
+
+**รูปแบบที่แนะนำ:** `Table` + `Two-col` ล่าง  
+- บน: ตารางเปรียบเทียบ 3 โมเดล (ไฮไลต์ RF)  
+- ล่างซ้าย: success criteria  
+- ล่างขวา: caveat แถวซ้ำ
 
 **Heading:** Evaluation and success criteria  
 
@@ -199,7 +270,8 @@ Rule triage gates the deep form; RF scores lifestyle/heart features; the decisio
 
 **Success criteria**
 - Technical: macro F1 ≥ 0.80 and accuracy ≥ 0.85 → **met**
-- Usefulness: ≥ 80% of local feedback entries marked useful → **measure on `#result` during rehearsal**
+- Audit: show `#logs` + `#trust` after rehearsal (anonymous log + proxy GT)
+- Future work: user/clinician outcome feedback loop is not implemented yet
 
 **Caveat:** duplicate feature rows can inflate CV scores.
 
@@ -207,12 +279,18 @@ Rule triage gates the deep form; RF scores lifestyle/heart features; the decisio
 
 ## Slide 13 — Decision rules and actions (เฟรม)
 
+**รูปแบบที่แนะนำ:** `Rules`  
+- ซ้าย: Pre-screen gate  
+- ขวา: Decision layer  
+- แถบล่างเต็มความกว้าง: “Human approval required”
+
 **Heading:** From output to action  
 
 **Pre-screen gate**
 - Insomnia: ≥2 of items 1, 6, 9
 - Sleep Apnea: ≥2 items or red-flag 3 / 4 / 12
-- Else None → deep assess locked
+- Else None → summarize; optional deep assess
+- Parallel STOP-Bang / ISI-inspired scores are supporting evidence only
 
 **Decision layer**
 - Confidence bands: &lt;0.40 / 0.40–0.69 / ≥0.70
@@ -225,13 +303,19 @@ Rule triage gates the deep form; RF scores lifestyle/heart features; the decisio
 
 ## Slide 14 — Proof of concept demo (เฟรม)
 
+**รูปแบบที่แนะนำ:** `Demo`  
+- ใช้เป็นสไลด์ “bridge” ก่อนสลับไปเว็บจริง  
+- แสดง 5 ขั้นเดโมเป็นหมายเลขใหญ่แนวตั้งหรือแนวนอน  
+- ใส่ URL สั้นมุมล่าง: `http://127.0.0.1:8765/`  
+- อย่าใส่ screenshot ทั้งจอทับสคริปต์ (เดโมสดสำคัญกว่า)
+
 **Heading:** Proof of concept  
 **Demo script (2–3 minutes):**
 1. Try opening `#assess` first → show the lock.
-2. Open `#screen`; show that one weak yes does not flag; use threshold or red-flag.
+2. Open `#screen`; show that one weak yes does not flag; use threshold or red-flag; point to parallel standard scores.
 3. Continue to deep assessment; submit the form.
-4. On `#result`, show pre-screen vs model, hybrid score, actions, and submit feedback.
-5. Optional: `#eda` for one chart + CV metrics.
+4. On `#result`, show pre-screen vs model, hybrid score, actions, and standards.
+5. Open `#logs` / `#trust` briefly; optional `#eda` for one chart + CV metrics.
 
 **Run command**
 ```powershell
@@ -244,6 +328,11 @@ Open http://127.0.0.1:8765/
 
 ## Slide 15 — Benefits, limitations, conclusion (ดอส)
 
+**รูปแบบที่แนะนำ:** `Close` = `Two-col` + closing line  
+- ซ้าย: Benefits  
+- ขวา: Limitations / ethics  
+- ล่างสุดเต็มความกว้าง: closing line 1 ประโยค + “Q&A”
+
 **Heading:** Benefits, limits, and conclusion  
 
 **Benefits**
@@ -254,7 +343,7 @@ Open http://127.0.0.1:8765/
 **Limitations and ethics**
 - Synthetic source data; small and partly duplicated sample
 - Screening aid only; risk of false reassurance or alarm
-- Needs human oversight and future feedback data
+- Needs human oversight; outcome feedback remains future work
 
 **Closing line:**  
 The prototype shows a complete Problem → Data → Model → Decision → Action path for course demonstration, while staying clear that a clinician makes the final medical call.
@@ -266,4 +355,4 @@ The prototype shows a complete Problem → Data → Model → Decision → Actio
 - **ทำไมไม่ใส่ 13 ข้อเข้า RF?** CSV ไม่มีป้ายของคำถามพวกนั้น ถ้าฝืนใส่จะไม่มีคู่ฝึกที่สุจริต — เลยใช้กฎ + ชั้นตัดสินใจแทน  
 - **ทำไมคะแนนสูง?** มีแถวซ้ำ 265 แถว และประเมินบนตารางเดียวกัน  
 - **เป็นวินิจฉัยหรือยัง?** ไม่ใช่ เป็นเครื่องมือคัดกรองสำหรับงานวิชา  
-- **Feedback อยู่ตรงไหน?** หน้า `#result` เก็บ useful/not useful ใน localStorage เป็น prototype ของขั้นที่ 10
+- **ขั้นที่ 10 อยู่ตรงไหน?** หลังประเมิน ระบบเก็บ anonymous log ใน SQLite ดูที่ `#logs` / CSV และสรุป trust ที่ `#trust`; outcome feedback จากผู้ใช้/แพทย์ยังเป็น future work

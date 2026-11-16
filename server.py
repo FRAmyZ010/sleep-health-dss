@@ -6,18 +6,27 @@ records and prepares chart data by calling model.py.
 
 from __future__ import annotations
 
-import json
 import math
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from pathlib import Path
+from typing import Annotated
 
 import numpy as np
 import pandas as pd
-from fastapi import Body, FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import Body, FastAPI, Query
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from db import (
+    export_assessments_csv,
+    get_assessment,
+    init_db,
+    insert_assessment,
+    list_assessments,
+    list_people,
+    prior_from_similar_logs,
+)
+from ground_truth import build_trust_report
 from model import (
     CLASS_ORDER,
     GENDERS,
@@ -34,8 +43,6 @@ from model import (
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
 ASSET_DIR = ROOT / "assets"
-DATA_DIR = ROOT / "data"
-FEEDBACK_PATH = DATA_DIR / "feedback.jsonl"
 WEIGHT_LIMITS_KG = (30.0, 250.0)
 HEIGHT_LIMITS_CM = (120.0, 220.0)
 HEATMAP_COLUMNS = [
@@ -55,6 +62,7 @@ async def lifespan(_app: FastAPI):
     """Train or load the cached pipeline once, before requests arrive."""
 
     global BUNDLE
+    init_db()
     BUNDLE = get_bundle()
     yield
 
@@ -227,66 +235,119 @@ def assess(payload: dict = Body(...)) -> JSONResponse | dict:
     })
 
 
-def _read_feedback_rows() -> list[dict]:
-    """Load local JSONL feedback entries for the usefulness criterion."""
+def _strip_identity_fields(payload: dict) -> dict:
+    """Drop accidental identity fields; logs stay anonymous."""
 
-    if not FEEDBACK_PATH.is_file():
-        return []
-    rows: list[dict] = []
-    for line in FEEDBACK_PATH.read_text(encoding="utf-8").splitlines():
-        text = line.strip()
-        if not text:
-            continue
-        try:
-            item = json.loads(text)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(item, dict):
-            rows.append(item)
-    return rows
-
-
-def _feedback_stats(rows: list[dict]) -> dict:
-    useful = sum(1 for row in rows if row.get("useful") is True)
-    total = len(rows)
+    blocked = {
+        "name", "full_name", "email", "phone", "ip", "ip_address",
+        "address", "national_id", "student_id", "user_id",
+    }
     return {
-        "total": total,
-        "useful": useful,
-        "rate": (useful / total) if total else None,
-        "meets_usefulness_criterion": (useful / total) >= 0.80 if total else False,
+        key: value
+        for key, value in payload.items()
+        if str(key).lower() not in blocked
     }
 
 
-@app.get("/api/feedback")
-def feedback_stats() -> dict:
-    """Return the local usefulness rate from stored demo feedback."""
+@app.post("/api/logs", response_model=None)
+def logs_create(payload: dict = Body(...)) -> JSONResponse | dict:
+    """Store one anonymous assessment run for audit / later comparison."""
 
-    return sanitize(_feedback_stats(_read_feedback_rows()))
+    clean = _strip_identity_fields(payload if isinstance(payload, dict) else {})
+    try:
+        row = insert_assessment(clean)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"errors": [{"code": str(exc)}]})
+    return sanitize({"saved": True, "row": row})
 
 
-@app.post("/api/feedback", response_model=None)
-def feedback_create(payload: dict = Body(...)) -> JSONResponse | dict:
-    """Append one usefulness vote for workflow step 10 (local file only)."""
+@app.get("/api/logs/people")
+def logs_people(limit: Annotated[int, Query(ge=1, le=500)] = 200) -> dict:
+    """List anonymous people for per-person log loading."""
 
-    if "useful" not in payload or not isinstance(payload.get("useful"), bool):
-        return JSONResponse(status_code=400, content={"errors": [{"code": "useful_required"}]})
+    return sanitize(list_people(limit=limit))
 
-    entry = {
-        "at": datetime.now(timezone.utc).isoformat(),
-        "useful": bool(payload["useful"]),
-        "note": str(payload.get("note") or "").strip()[:500],
-        "model_label": str(payload.get("model_label") or "")[:64],
-        "screen_class": str(payload.get("screen_class") or "")[:64],
-        "risk_level": str(payload.get("risk_level") or "")[:32],
-        "top_probability": payload.get("top_probability"),
-        "hybrid_score": payload.get("hybrid_score"),
-        "conflict": payload.get("conflict"),
-    }
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with FEEDBACK_PATH.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    rows = _read_feedback_rows()
-    return sanitize({"saved": True, "entry": entry, "stats": _feedback_stats(rows)})
+
+@app.get("/api/logs")
+def logs_list(
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    detail: Annotated[bool, Query()] = False,
+    enrich: Annotated[bool, Query()] = True,
+    anon_id: Annotated[str | None, Query()] = None,
+) -> dict:
+    """List anonymous assessment logs (newest first), optionally per person + GT enrich."""
+
+    return sanitize(
+        list_assessments(
+            limit=limit,
+            offset=offset,
+            detail=detail,
+            anon_id=anon_id,
+            enrich=enrich,
+        )
+    )
+
+
+@app.get("/api/logs/export.csv")
+def logs_export_csv() -> Response:
+    """Download enriched logs as CSV for Google Sheets / offline review."""
+
+    csv_text = export_assessments_csv()
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="assessment_logs.csv"'
+        },
+    )
+
+
+@app.post("/api/logs/prior")
+def logs_prior(payload: dict = Body(...)) -> dict:
+    """Return a similar-case prior from anonymous logs for the decision layer."""
+
+    age_raw = payload.get("age")
+    try:
+        age = float(age_raw) if age_raw is not None and age_raw != "" else None
+    except (TypeError, ValueError):
+        age = None
+    exclude_id = payload.get("exclude_id")
+    try:
+        exclude = int(exclude_id) if exclude_id is not None else None
+    except (TypeError, ValueError):
+        exclude = None
+    return sanitize(
+        prior_from_similar_logs(
+            screen_class=str(payload.get("screen_class") or "None"),
+            model_label=str(payload.get("model_label") or ""),
+            age=age,
+            bmi_category=(str(payload.get("bmi_category")).strip() if payload.get("bmi_category") else None),
+            min_similar=int(payload.get("min_similar") or 3),
+            age_window=float(payload.get("age_window") or 10),
+            exclude_id=exclude,
+        )
+    )
+
+
+@app.get("/api/logs/{row_id}", response_model=None)
+def logs_detail(
+    row_id: int,
+    enrich: Annotated[bool, Query()] = True,
+) -> JSONResponse | dict:
+    """Return one log row with questionnaire flats, rule GT, proxy GT, and comparisons."""
+
+    row = get_assessment(row_id, enrich=enrich)
+    if row is None:
+        return JSONResponse(status_code=404, content={"errors": [{"code": "not_found"}]})
+    return sanitize(row)
+
+
+@app.get("/api/trust")
+def trust_report() -> dict:
+    """Proxy (Kaggle CV) + reference-profile ground-truth summary for the trust page."""
+
+    return sanitize(build_trust_report(_bundle()))
 
 
 @app.post("/api/eda")
@@ -418,6 +479,11 @@ def _prevalence(filtered: pd.DataFrame) -> dict:
 
 
 if __name__ == "__main__":
+    import os
+
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8765)
+    # Local default stays 127.0.0.1:8765. Render sets PORT and needs 0.0.0.0.
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8765"))
+    uvicorn.run(app, host=host, port=port)
